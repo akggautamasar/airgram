@@ -15,17 +15,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Web
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -87,11 +79,11 @@ fun SettingsScreen(onBack: () -> Unit) {
         ) {
             SectionTitle("Community")
             SettingsGroup {
-                SettingRow(Icons.Filled.Chat, "Join Community", "Get help and discuss features") { dialog = "Community" }
+                SettingRow(Icons.Filled.Settings, "Join Community", "Get help and discuss features") { dialog = "Community" }
             }
             SectionTitle("Data & Storage")
             SettingsGroup {
-                SettingRow(Icons.Filled.Folder, "Storage Usage", "${fmtSize(cacheBytes)} used") { dialog = "Storage Usage" }
+                SettingRow(Icons.Filled.Settings, "Storage Usage", "${fmtSize(cacheBytes)} used") { dialog = "Storage Usage" }
                 SettingRow(Icons.Filled.Refresh, "Clear Cache", "Free up storage space") {
                     scope.launch {
                         withContext(Dispatchers.IO) { Tg.filesDir.deleteRecursively() }
@@ -99,28 +91,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                         refresh++
                     }
                 }
-                SettingRow(Icons.Filled.Download, "Export Database", "Experimental") { dialog = "Export Database" }
-                SettingRow(Icons.Filled.Upload, "Import Database", "Experimental") { dialog = "Import Database" }
+                SettingRow(Icons.Filled.Settings, "Export Database", "Experimental") { dialog = "Export Database" }
+                SettingRow(Icons.Filled.Settings, "Import Database", "Experimental") { dialog = "Import Database" }
                 SettingRow(Icons.Filled.Delete, "Reset Database", "Experimental", destructive = true) { dialog = "Reset Database" }
             }
             SectionTitle("App Preferences")
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SettingIcon(Icons.Filled.VisibilityOff)
+                    SettingIcon(Icons.Filled.Settings)
                     Column(Modifier.weight(1f).padding(start = 16.dp)) { Text("Hide Navigation Labels") }
                     Switch(checked = hideLabels, onCheckedChange = { hideLabels = it })
                 }
                 SettingRow(Icons.Filled.Settings, "Default Video Decoder", decoder) { dialog = "Default Video Decoder" }
                 SettingRow(Icons.Filled.PlayArrow, "Default Player Engine", playback) { dialog = "Default Player Engine" }
-                SettingRow(Icons.Filled.Palette, "App Theme", theme) { dialog = "App Theme" }
+                SettingRow(Icons.Filled.Settings, "App Theme", theme) { dialog = "App Theme" }
             }
             SectionTitle("Legal")
             SettingsGroup {
-                SettingRow(Icons.Filled.Security, "Privacy Policy") { dialog = "Privacy Policy" }
+                SettingRow(Icons.Filled.Settings, "Privacy Policy") { dialog = "Privacy Policy" }
                 SettingRow(Icons.Filled.Settings, "Terms & Conditions") { dialog = "Terms & Conditions" }
             }
             SectionTitle("About")
-            SettingsGroup { SettingRow(Icons.Filled.Web, "Visit Website") { dialog = "Website" } }
+            SettingsGroup { SettingRow(Icons.Filled.Settings, "Visit Website") { dialog = "Website" } }
             SectionTitle("Account & Security")
             SettingsGroup {
                 SettingRow(Icons.Filled.Refresh, "Restore Purchase", "Re-verify premium status manually") { dialog = "Restore Purchase" }

@@ -19,10 +19,8 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,8 +78,8 @@ fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
         },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(selected = selectedNav == "Discover", onClick = { selectedNav = "Discover" }, icon = { Icon(Icons.Filled.Explore, null) }, label = { Text("Discover") })
-                NavigationBarItem(selected = selectedNav == "Chats", onClick = { selectedNav = "Chats" }, icon = { Icon(Icons.Filled.Chat, null) }, label = { Text("Chats") })
+                NavigationBarItem(selected = selectedNav == "Discover", onClick = { selectedNav = "Discover" }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Discover") })
+                NavigationBarItem(selected = selectedNav == "Chats", onClick = { selectedNav = "Chats" }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Chats") })
                 NavigationBarItem(selected = selectedNav == "Search", onClick = { selectedNav = "Search"; searching = true }, icon = { Icon(Icons.Filled.Search, null) }, label = { Text("Search") })
                 NavigationBarItem(selected = false, onClick = onSettings, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
             }
