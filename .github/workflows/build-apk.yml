@@ -1,0 +1,88 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      td_ref:
+        description: "TDLib git ref/commit to build (blank = latest master)"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve TDLib commit
+        id: td
+        run: |
+          REF="${{ inputs.td_ref }}"
+          REF="${REF:-HEAD}"
+          SHA=$(git ls-remote https://github.com/tdlib/td.git "$REF" | head -n1 | cut -f1)
+          if [ -z "$SHA" ]; then SHA="$REF"; fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Using TDLib $SHA"
+      - name: Restore TDLib build cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: tdlib-out
+          key: tdlib-android-${{ steps.td.outputs.sha }}
+      - name: Build TDLib for Android
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          DOCKER_BUILDKIT: "1"
+        run: |
+          git clone --depth 1 https://github.com/tdlib/td.git td-src
+          cd td-src/example/android
+          docker build --build-arg COMMIT_HASH=${{ steps.td.outputs.sha }} --output "$GITHUB_WORKSPACE/tdlib-out" .
+          ls -R "$GITHUB_WORKSPACE/tdlib-out" | head -50
+      - name: Install TDLib into the app
+        run: |
+          set -e
+          mkdir -p tdlib-unpacked
+          ZIP=$(find tdlib-out -name 'tdlib.zip' | head -n1)
+          unzip -q -o "$ZIP" -d tdlib-unpacked
+          for abi in arm64-v8a armeabi-v7a; do
+            SO=$(find tdlib-unpacked -path "*/$abi/libtdjni.so" | head -n1)
+            mkdir -p app/src/main/jniLibs/$abi
+            cp "$SO" app/src/main/jniLibs/$abi/libtdjni.so
+          done
+          JAVA_DIR=$(dirname "$(find tdlib-unpacked -name TdApi.java | head -n1)")
+          mkdir -p app/src/main/java/org/drinkless/tdlib
+          cp "$JAVA_DIR"/*.java app/src/main/java/org/drinkless/tdlib/
+          ls -la app/src/main/jniLibs/*/ app/src/main/java/org/drinkless/tdlib/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Restore signing key (optional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          else
+            echo "No KEYSTORE_BASE64 secret: APK will be signed with a throw-away debug key."
+          fi
+      - name: Assemble release APK
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirGram-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
