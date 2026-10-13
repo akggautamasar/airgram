@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,8 +21,13 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,8 +63,18 @@ fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
     var searching by remember { mutableStateOf(false) }
     var q by remember { mutableStateOf("") }
     var selectedNav by remember { mutableStateOf("Chats") }
+    var chatFilter by remember { mutableStateOf("All") }
     val shown = remember(chats, q) {
-        if (q.isBlank()) chats else chats.filter { it.title.contains(q.trim(), ignoreCase = true) }
+        chats.filter { c ->
+            val matchesQuery = q.isBlank() || c.title.contains(q.trim(), ignoreCase = true)
+            val matchesFilter = when (chatFilter) {
+                "Private" -> c.subtitle == "Private chat" || c.subtitle == "Saved messages"
+                "Groups" -> c.subtitle == "Group"
+                "Channels" -> c.subtitle == "Channel"
+                else -> true
+            }
+            matchesQuery && matchesFilter && (selectedNav != "Discover" || c.subtitle == "Channel")
+        }
     }
 
     Scaffold(
@@ -78,8 +95,8 @@ fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
         },
         bottomBar = {
             NavigationBar {
-                NavigationBarItem(selected = selectedNav == "Discover", onClick = { selectedNav = "Discover" }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Discover") })
-                NavigationBarItem(selected = selectedNav == "Chats", onClick = { selectedNav = "Chats" }, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Chats") })
+                NavigationBarItem(selected = selectedNav == "Discover", onClick = { selectedNav = "Discover"; chatFilter = "All" }, icon = { Icon(Icons.Filled.Explore, null) }, label = { Text("Discover") })
+                NavigationBarItem(selected = selectedNav == "Chats", onClick = { selectedNav = "Chats"; chatFilter = "All" }, icon = { Icon(Icons.Filled.Chat, null) }, label = { Text("Chats") })
                 NavigationBarItem(selected = selectedNav == "Search", onClick = { selectedNav = "Search"; searching = true }, icon = { Icon(Icons.Filled.Search, null) }, label = { Text("Search") })
                 NavigationBarItem(selected = false, onClick = onSettings, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
             }
@@ -87,6 +104,11 @@ fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
     ) { pad ->
         Column(Modifier.padding(pad)) {
             ConnectionBanner()
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("All", "Private", "Groups", "Channels").forEach { filter ->
+                    FilterChip(selected = chatFilter == filter, onClick = { chatFilter = filter; if (filter != "All") selectedNav = "Chats" }, label = { Text(filter) })
+                }
+            }
             if (shown.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(if (chats.isEmpty()) "Loading your chats…" else "No chats match", color = MaterialTheme.colorScheme.onSurfaceVariant)

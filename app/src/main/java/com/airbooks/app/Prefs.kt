@@ -12,9 +12,13 @@ object Prefs {
     private lateinit var sp: SharedPreferences
     var prefetchMb by mutableIntStateOf(16)
         private set
-    var autoThumbs by mutableStateOf(true)
-        private set
     var themeMode by mutableStateOf("System Default")
+        private set
+    var playerEngine by mutableStateOf("ExoPlayer")
+        private set
+    var videoDecoder by mutableStateOf("Auto (Recommended)")
+        private set
+    var autoThumbs by mutableStateOf(true)
         private set
 
     fun init(ctx: Context) {
@@ -22,6 +26,9 @@ object Prefs {
         prefetchMb = sp.getInt("prefetchMb", 16)
         autoThumbs = sp.getBoolean("autoThumbs", true)
         themeMode = sp.getString("themeMode", "System Default") ?: "System Default"
+        playerEngine = sp.getString("playerEngine", "ExoPlayer") ?: "ExoPlayer"
+        videoDecoder = sp.getString("videoDecoder", "Auto (Recommended)") ?: "Auto (Recommended")
+        autoThumbs = sp.getBoolean("autoThumbs", true)
     }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
@@ -31,6 +38,9 @@ object Prefs {
         autoThumbs = v
         sp.edit().putBoolean("autoThumbs", v).apply()
     }
+    fun setPlayerEngine(value: String) { playerEngine = value; sp.edit().putString("playerEngine", value).apply() }
+    fun setVideoDecoder(value: String) { videoDecoder = value; sp.edit().putString("videoDecoder", value).apply() }
+    fun updateAutoThumbs(v: Boolean) { autoThumbs = v; sp.edit().putBoolean("autoThumbs", v).apply() }
     fun setTheme(mode: String) {
         themeMode = mode
         sp.edit().putString("themeMode", mode).apply()

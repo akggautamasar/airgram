@@ -58,8 +58,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     var dialog by remember { mutableStateOf("") }
     var confirmLogout by remember { mutableStateOf(false) }
     var hideLabels by remember { mutableStateOf(false) }
-    var playback by remember { mutableStateOf("ExoPlayer") }
-    var decoder by remember { mutableStateOf("Auto (Recommended)") }
+    val playback = Prefs.playerEngine
+    val decoder = Prefs.videoDecoder
     val theme = Prefs.themeMode
 
     LaunchedEffect(refresh) {
@@ -91,16 +91,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                         refresh++
                     }
                 }
-                SettingRow(Icons.Filled.Settings, "Export Database", "Experimental") { dialog = "Export Database" }
-                SettingRow(Icons.Filled.Settings, "Import Database", "Experimental") { dialog = "Import Database" }
-                SettingRow(Icons.Filled.Delete, "Reset Database", "Experimental", destructive = true) { dialog = "Reset Database" }
+                SettingRow(Icons.Filled.Delete, "Clear Download Cache", "Remove cached Telegram media files", destructive = true) { dialog = "Confirm Clear Cache" }
             }
             SectionTitle("App Preferences")
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     SettingIcon(Icons.Filled.Settings)
-                    Column(Modifier.weight(1f).padding(start = 16.dp)) { Text("Hide Navigation Labels") }
-                    Switch(checked = hideLabels, onCheckedChange = { hideLabels = it })
+                    Column(Modifier.weight(1f).padding(start = 16.dp)) { Text("Load media thumbnails") }
+                    Switch(checked = Prefs.autoThumbs, onCheckedChange = { Prefs.updateAutoThumbs(it) })
                 }
                 SettingRow(Icons.Filled.Settings, "Default Video Decoder", decoder) { dialog = "Default Video Decoder" }
                 SettingRow(Icons.Filled.PlayArrow, "Default Player Engine", playback) { dialog = "Default Player Engine" }
@@ -122,9 +120,17 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    if (dialog.isNotEmpty()) {
+    if (dialog == "Confirm Clear Cache") AlertDialog(
+        onDismissRequest = { dialog = "" },
+        title = { Text("Clear downloaded cache?") },
+        text = { Text("This removes cached Telegram media and thumbnails only. Your chats and Telegram account remain intact.") },
+        confirmButton = { TextButton(onClick = { dialog = ""; scope.launch { withContext(Dispatchers.IO) { Tg.filesDir.deleteRecursively(); Tg.filesDir.mkdirs() }; Tg.dropFileCache(); refresh++ } }) { Text("Clear cache") } },
+        dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
+    )
+
+    if (dialog.isNotEmpty() && dialog != "Confirm Clear Cache") {
         val choices = when (dialog) {
-            "Default Player Engine" -> listOf("ExoPlayer", "VLC Engine")
+            "Default Player Engine" -> listOf("ExoPlayer")
             "Default Video Decoder" -> listOf("Auto (Recommended)", "Hardware", "Software")
             "App Theme" -> listOf("System Default", "Light", "Dark")
             else -> emptyList()
@@ -136,15 +142,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                 if (choices.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     choices.forEach { choice ->
                         val selected = when (dialog) {
-                            "Default Player Engine" -> playback == choice
-                            "Default Video Decoder" -> decoder == choice
+                            "Default Player Engine" -> Prefs.playerEngine == choice
+                            "Default Video Decoder" -> Prefs.videoDecoder == choice
                             else -> Prefs.themeMode == choice
                         }
                         Card(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 when (dialog) {
-                                    "Default Player Engine" -> playback = choice
-                                    "Default Video Decoder" -> decoder = choice
+                                    "Default Player Engine" -> Prefs.setPlayerEngine(choice)
+                                    "Default Video Decoder" -> Prefs.setVideoDecoder(choice)
                                     "App Theme" -> Prefs.setTheme(choice)
                                 }
                                 dialog = ""
@@ -165,8 +171,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 } else Text(when (dialog) {
                     "Clear Cache" -> "Cached thumbnails and media files are removed."
                     "Storage Usage" -> "${fmtSize(cacheBytes)} currently used by local Telegram files."
-                    "Reset Database" -> "Database reset is experimental and is not enabled in this build."
-                    "Export Database", "Import Database" -> "Database transfer is experimental and is not enabled in this build."
+                    "Confirm Clear Cache" -> "Remove downloaded cached files and thumbnails? Telegram messages and account data will not be deleted."
                     else -> "This option is not configured yet."
                 })
             },
