@@ -24,7 +24,6 @@ object Prefs {
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("airbooks", Context.MODE_PRIVATE)
         prefetchMb = sp.getInt("prefetchMb", 16)
-        autoThumbs = sp.getBoolean("autoThumbs", true)
         themeMode = sp.getString("themeMode", "System Default") ?: "System Default"
         playerEngine = sp.getString("playerEngine", "ExoPlayer") ?: "ExoPlayer"
         videoDecoder = sp.getString("videoDecoder", "Auto (Recommended)") ?: "Auto (Recommended")
@@ -40,7 +39,6 @@ object Prefs {
     }
     fun setPlayerEngine(value: String) { playerEngine = value; sp.edit().putString("playerEngine", value).apply() }
     fun setVideoDecoder(value: String) { videoDecoder = value; sp.edit().putString("videoDecoder", value).apply() }
-    fun updateAutoThumbs(v: Boolean) { autoThumbs = v; sp.edit().putBoolean("autoThumbs", v).apply() }
     fun setTheme(mode: String) {
         themeMode = mode
         sp.edit().putString("themeMode", mode).apply()
