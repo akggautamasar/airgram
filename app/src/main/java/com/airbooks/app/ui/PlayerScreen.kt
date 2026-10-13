@@ -123,6 +123,7 @@ fun PlayerScreen(item: Media, onBack: () -> Unit) {
         val mi = MediaItem.Builder().setUri("tg://file/${item.fileId}").build()
         player.setMediaItem(mi, Prefs.getPos(item.key))
         player.prepare()
+        player.setPlaybackSpeed(Prefs.playbackSpeed)
         player.playWhenReady = true
     }
     LaunchedEffect(player) {
@@ -179,6 +180,7 @@ fun PlayerScreen(item: Media, onBack: () -> Unit) {
                     },
                     modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp),
                 ) { Text("⟳") }
+                Button(onClick = { val next = when (Prefs.playbackSpeed) { 0.75f -> 1f; 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; 2f -> 0.5f; else -> 0.75f }; Prefs.setPlaybackSpeed(next); player.setPlaybackSpeed(next) }, modifier = Modifier.align(Alignment.TopEnd).padding(top = 64.dp, end = 8.dp)) { Text("${Prefs.playbackSpeed}×") }
             }
         }
 

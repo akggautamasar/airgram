@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,6 +94,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
                 SettingRow(Icons.Filled.Delete, "Clear Download Cache", "Remove cached Telegram media files", destructive = true) { dialog = "Confirm Clear Cache" }
             }
+            SectionTitle("Playback & Streaming")
+            SettingsGroup {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("Streaming prefetch", style = MaterialTheme.typography.titleMedium)
+                    Text("${Prefs.prefetchMb} MB · More buffering can help on slow networks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value = Prefs.prefetchMb.toFloat(), onValueChange = { Prefs.setPrefetch(it.toInt()) }, valueRange = 4f..64f, steps = 14)
+                }
+                SettingRow(Icons.Filled.PlayArrow, "Playback speed", "${Prefs.playbackSpeed}× (tap in player to cycle)") { dialog = "Playback Speed" }
+            }
             SectionTitle("App Preferences")
             SettingsGroup {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -133,6 +143,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             "Default Player Engine" -> listOf("ExoPlayer")
             "Default Video Decoder" -> listOf("Auto (Recommended)", "Hardware", "Software")
             "App Theme" -> listOf("System Default", "Light", "Dark")
+            "Playback Speed" -> listOf("0.5", "0.75", "1.0", "1.25", "1.5", "2.0")
             else -> emptyList()
         }
         AlertDialog(
@@ -144,6 +155,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         val selected = when (dialog) {
                             "Default Player Engine" -> Prefs.playerEngine == choice
                             "Default Video Decoder" -> Prefs.videoDecoder == choice
+                            "Playback Speed" -> Prefs.playbackSpeed == choice.toFloatOrNull()
                             else -> Prefs.themeMode == choice
                         }
                         Card(
@@ -152,6 +164,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     "Default Player Engine" -> Prefs.setPlayerEngine(choice)
                                     "Default Video Decoder" -> Prefs.setVideoDecoder(choice)
                                     "App Theme" -> Prefs.setTheme(choice)
+                                    "Playback Speed" -> Prefs.setPlaybackSpeed(choice.toFloatOrNull() ?: 1f)
                                 }
                                 dialog = ""
                             },
