@@ -91,7 +91,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Switch(checked = Prefs.autoThumbs, onCheckedChange = { Prefs.setAutoThumbs(it) })
+                Switch(checked = Prefs.autoThumbs, onCheckedChange = { Prefs.updateAutoThumbs(it) })
             }
 
             HorizontalDivider(Modifier.padding(vertical = 16.dp))

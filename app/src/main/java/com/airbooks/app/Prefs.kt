@@ -30,7 +30,8 @@ object Prefs {
         sp.edit().putInt("prefetchMb", mb).apply()
     }
 
-    fun setAutoThumbs(v: Boolean) {
+    // Avoid JVM setter signature collision with the autoThumbs property setter.
+    fun updateAutoThumbs(v: Boolean) {
         autoThumbs = v
         sp.edit().putBoolean("autoThumbs", v).apply()
     }
