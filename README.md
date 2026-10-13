@@ -1,3 +1,3 @@
-# AirGram Android application
+### Source archive
 
-The AirGram project source is being restored from the uploaded ZIP. See the project archive attached in the conversation for the complete original application source. The files currently in this repository are a partial reconstruction and are not a release-ready build.
+The exact full project source is also available as `AirGram_upload_ready.zip` from the conversation attachments. This repository version is a partial reconstruction; do not consider it a verified build yet.
