@@ -1,3 +1,4 @@
 package com.airbooks.app.tg
 
-// Telegram / TDLib wrapper is included in the downloadable project archive.
+/** Telegram/TDLib integration placeholder. */
+class Tg
