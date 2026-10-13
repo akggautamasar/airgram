@@ -1,3 +1,8 @@
 package com.airbooks.app.tg
 
-// AirGram media models are included in the downloadable project archive.
+data class Media(
+    val id: Long,
+    val title: String,
+    val filePath: String? = null,
+    val mimeType: String? = null
+)
