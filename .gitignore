@@ -1,8 +1,11 @@
 .gradle/
 build/
 local.properties
-*.iml
-.idea/
-*.apk
-*.aab
 *.keystore
+*.jks
+.idea/
+# generated in CI from the official TDLib build
+app/src/main/jniLibs/
+app/src/main/java/org/drinkless/
+tdlib-out/
+tdlib-unpacked/

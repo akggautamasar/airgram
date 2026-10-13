@@ -15,6 +15,7 @@ fun secret(name: String): String = System.getenv(name)?.takeIf { it.isNotBlank()
 android {
     namespace = "com.airbooks.app"
     compileSdk = 34
+
     defaultConfig {
         applicationId = "com.airbooks.app"
         minSdk = 24
@@ -25,6 +26,7 @@ android {
         buildConfigField("String", "TG_API_HASH", "\"${secret("TG_API_HASH")}\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
+
     signingConfigs {
         create("ci") {
             val ks = System.getenv("KEYSTORE_FILE")
@@ -36,6 +38,7 @@ android {
             }
         }
     }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -43,6 +46,7 @@ android {
             signingConfig = if (hasKs) signingConfigs.getByName("ci") else signingConfigs.getByName("debug")
         }
     }
+
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -58,10 +62,12 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.annotation:annotation:1.8.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("io.coil-kt:coil-compose:2.7.0")

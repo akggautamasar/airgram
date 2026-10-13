@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
+
+      # ── 1. TDLib: built once from Telegram's official source, then cached ──────────────
       - name: Resolve TDLib commit
         id: td
         run: |
@@ -25,13 +27,15 @@ jobs:
           if [ -z "$SHA" ]; then SHA="$REF"; fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Using TDLib $SHA"
+
       - name: Restore TDLib build cache
         id: cache
         uses: actions/cache@v4
         with:
           path: tdlib-out
           key: tdlib-android-${{ steps.td.outputs.sha }}
-      - name: Build TDLib for Android
+
+      - name: Build TDLib for Android (official Docker recipe, first run only, ~30-60 min)
         if: steps.cache.outputs.cache-hit != 'true'
         env:
           DOCKER_BUILDKIT: "1"
@@ -40,7 +44,8 @@ jobs:
           cd td-src/example/android
           docker build --build-arg COMMIT_HASH=${{ steps.td.outputs.sha }} --output "$GITHUB_WORKSPACE/tdlib-out" .
           ls -R "$GITHUB_WORKSPACE/tdlib-out" | head -50
-      - name: Install TDLib into the app
+
+      - name: Install TDLib (native libs + Java API) into the app
         run: |
           set -e
           mkdir -p tdlib-unpacked
@@ -55,13 +60,17 @@ jobs:
           mkdir -p app/src/main/java/org/drinkless/tdlib
           cp "$JAVA_DIR"/*.java app/src/main/java/org/drinkless/tdlib/
           ls -la app/src/main/jniLibs/*/ app/src/main/java/org/drinkless/tdlib/
+
+      # ── 2. Build the app ───────────────────────────────────────────────────────────────
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
       - name: Restore signing key (optional)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -72,6 +81,7 @@ jobs:
           else
             echo "No KEYSTORE_BASE64 secret: APK will be signed with a throw-away debug key."
           fi
+
       - name: Assemble release APK
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
@@ -79,10 +89,9 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle :app:assembleRelease
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: AirGram-apk
+          name: AirBooks-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
