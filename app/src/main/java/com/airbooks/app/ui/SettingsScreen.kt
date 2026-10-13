@@ -60,7 +60,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var hideLabels by remember { mutableStateOf(false) }
     var playback by remember { mutableStateOf("ExoPlayer") }
     var decoder by remember { mutableStateOf("Auto (Recommended)") }
-    var theme by remember { mutableStateOf("System Default") }
+    val theme = Prefs.themeMode
 
     LaunchedEffect(refresh) {
         cacheBytes = withContext(Dispatchers.IO) {
@@ -138,14 +138,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                         val selected = when (dialog) {
                             "Default Player Engine" -> playback == choice
                             "Default Video Decoder" -> decoder == choice
-                            else -> theme == choice
+                            else -> Prefs.themeMode == choice
                         }
                         Card(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 when (dialog) {
                                     "Default Player Engine" -> playback = choice
                                     "Default Video Decoder" -> decoder = choice
-                                    "App Theme" -> theme = choice
+                                    "App Theme" -> Prefs.setTheme(choice)
                                 }
                                 dialog = ""
                             },

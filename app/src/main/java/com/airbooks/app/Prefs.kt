@@ -14,11 +14,14 @@ object Prefs {
         private set
     var autoThumbs by mutableStateOf(true)
         private set
+    var themeMode by mutableStateOf("System Default")
+        private set
 
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("airbooks", Context.MODE_PRIVATE)
         prefetchMb = sp.getInt("prefetchMb", 16)
         autoThumbs = sp.getBoolean("autoThumbs", true)
+        themeMode = sp.getString("themeMode", "System Default") ?: "System Default"
     }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
@@ -27,6 +30,10 @@ object Prefs {
     fun updateAutoThumbs(v: Boolean) {
         autoThumbs = v
         sp.edit().putBoolean("autoThumbs", v).apply()
+    }
+    fun setTheme(mode: String) {
+        themeMode = mode
+        sp.edit().putString("themeMode", mode).apply()
     }
     fun getPos(key: String): Long = sp.getLong("pos_$key", 0L)
     fun setPos(key: String, ms: Long) = sp.edit().putLong("pos_$key", ms).apply()
