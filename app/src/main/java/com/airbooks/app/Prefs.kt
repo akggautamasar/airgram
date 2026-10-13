@@ -1,3 +1,8 @@
 package com.airbooks.app
 
-// AirGram preferences source is included in the downloadable project archive.
+import android.content.Context
+
+object Prefs {
+    fun get(context: Context, key: String, defaultValue: String = ""): String =
+        context.getSharedPreferences("airgram", Context.MODE_PRIVATE).getString(key, defaultValue) ?: defaultValue
+}
