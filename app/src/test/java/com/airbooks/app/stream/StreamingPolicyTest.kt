@@ -15,7 +15,7 @@ class StreamingPolicyTest {
         rebuffers: Int = 0,
         lowerVariant: Boolean = false,
         maxWindow: Long = 64L * 1024 * 1024,
-    ) = PolicyInput(throughput, 50, bitrate, 0, rebuffers, 0, mode, lowerVariant, maxWindow)
+    ) = PolicyInput(throughput, 50L, bitrate, 0L, rebuffers, 0L, mode, lowerVariant, maxWindow)
 
     // Acceptance 5/6: estimator is bounded and stable.
     @Test

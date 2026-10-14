@@ -152,11 +152,11 @@ class TdDataSource(
         val decision = policy.decide(
             PolicyInput(
                 throughputBps = StreamingRuntime.estimator.ewmaBps,
-                avgLatencyMs = 0,
+                avgLatencyMs = 0L,
                 mediaBitrateBps = 0, // Telegram exposes no bitrate; size/duration only via MediaItem layer
-                bufferedMs = 0,
+                bufferedMs = 0L,
                 rebufferCount = StreamingRuntime.rebufferCount,
-                positionMs = 0,
+                positionMs = 0L,
                 mode = mode,
                 hasLowerQualityVariant = false, // one fixed-quality Telegram file: never faked
                 maxWindowBytes = Prefs.prefetchMb * MB,

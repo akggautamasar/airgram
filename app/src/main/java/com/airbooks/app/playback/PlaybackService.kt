@@ -37,11 +37,11 @@ class PlaybackService : MediaSessionService() {
         val decision = PlaybackPolicy().decide(
             PolicyInput(
                 throughputBps = StreamingRuntime.estimator.ewmaBps,
-                avgLatencyMs = 0,
+                avgLatencyMs = 0L,
                 mediaBitrateBps = 0,
-                bufferedMs = 0,
+                bufferedMs = 0L,
                 rebufferCount = 0,
-                positionMs = 0,
+                positionMs = 0L,
                 mode = mode,
                 hasLowerQualityVariant = false,
                 maxWindowBytes = Prefs.prefetchMb * 1024L * 1024L,

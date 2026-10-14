@@ -8,7 +8,7 @@ on:
         required: false
         default: ""
   push:
-    branches: [main]
+    branches: [main, 'arena/**']
 
 jobs:
   build:
@@ -81,6 +81,9 @@ jobs:
           else
             echo "No KEYSTORE_BASE64 secret: APK will be signed with a throw-away debug key."
           fi
+
+      - name: Run unit tests
+        run: gradle :app:testReleaseUnitTest --no-daemon --stacktrace
 
       - name: Assemble release APK
         env:
