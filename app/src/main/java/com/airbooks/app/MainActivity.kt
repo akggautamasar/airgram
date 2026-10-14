@@ -22,12 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.airbooks.app.download.DownloadManager
 import com.airbooks.app.tg.Kind
 import com.airbooks.app.tg.Media
 import com.airbooks.app.tg.Tg
 import com.airbooks.app.ui.AirTheme
 import com.airbooks.app.ui.ChatsScreen
 import com.airbooks.app.ui.CrashReportDialog
+import com.airbooks.app.ui.DownloadsScreen
 import com.airbooks.app.ui.FilesScreen
 import com.airbooks.app.ui.ImageScreen
 import com.airbooks.app.ui.LoginScreen
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
 sealed interface Screen {
     data object Chats : Screen
     data object Settings : Screen
+    data object Downloads : Screen
     data class Files(val chatId: Long, val title: String) : Screen
     data class Play(val item: Media, val queue: List<Media>, val chatTitle: String) : Screen
     data class Pdf(val item: Media) : Screen
@@ -100,12 +103,15 @@ fun MainNav() {
         Screen.Chats -> ChatsScreen(
             onOpen = { push(Screen.Files(it.id, it.title)) },
             onSettings = { push(Screen.Settings) },
+            onDownloads = { push(Screen.Downloads) },
         )
         Screen.Settings -> SettingsScreen(onBack = { pop() })
+        Screen.Downloads -> DownloadsScreen(onBack = { pop() })
         is Screen.Files -> FilesScreen(
             chatId = s.chatId,
             title = s.title,
             onBack = { pop() },
+            onDownload = { m -> DownloadManager.enqueue(m) },
             onOpen = { m, all ->
                 when (m.kind) {
                     Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m, all, s.title))

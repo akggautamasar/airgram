@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,6 +75,7 @@ fun FilesScreen(
     title: String,
     onBack: () -> Unit,
     onOpen: (Media, List<Media>) -> Unit,
+    onDownload: (Media) -> Unit = {},
 ) {
     var section by remember { mutableStateOf(Section.VIDEOS) }
     var grid by remember { mutableStateOf(true) }
@@ -132,9 +134,9 @@ fun FilesScreen(
                 }
             }
             if (grid) {
-                MediaGrid(st, ::more, thumbsOn) { onOpen(it, st.items.toList()) }
+                MediaGrid(st, ::more, thumbsOn, onDownload) { onOpen(it, st.items.toList()) }
             } else {
-                MediaList(st, ::more, thumbsOn) { onOpen(it, st.items.toList()) }
+                MediaList(st, ::more, thumbsOn, onDownload) { onOpen(it, st.items.toList()) }
             }
         }
     }
@@ -156,7 +158,7 @@ private fun Footer(st: ListState, onMore: () -> Unit) {
 }
 
 @Composable
-private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onClick: (Media) -> Unit) {
+private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyGridState()
     val nearEnd by remember {
         derivedStateOf {
@@ -179,6 +181,12 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onCl
                 Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick(m) }
             ) {
                 TgImage(m.thumbId, m.mini, Modifier.fillMaxSize(), enabled = thumbsOn)
+                IconButton(
+                    onClick = { onDownload(m) },
+                    modifier = Modifier.align(Alignment.TopEnd).size(30.dp),
+                ) {
+                    Icon(Icons.Filled.Download, "Download", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
                 if (m.kind == Kind.VIDEO) {
                     Text(
                         "▶ ${fmtDur(m.duration)}",
@@ -193,7 +201,7 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onCl
 }
 
 @Composable
-private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onClick: (Media) -> Unit) {
+private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyListState()
     val nearEnd by remember {
         derivedStateOf {
@@ -229,6 +237,9 @@ private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onCl
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
+                IconButton(onClick = { onDownload(m) }) {
+                    Icon(Icons.Filled.Download, "Download")
                 }
             }
         }

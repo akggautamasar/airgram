@@ -17,6 +17,7 @@ class AirBooksApp : Application() {
         installCrashReport()
         Prefs.init(this)
         Tg.init(this)
+        com.airbooks.app.download.DownloadManager.init(this)
         // Bound the temporary streaming cache to the user's cap (best effort, off the main thread).
         CoroutineScope(Dispatchers.IO).launch {
             delay(10_000)

@@ -42,6 +42,11 @@ object Prefs {
         private set
     var maxCacheMb by mutableIntStateOf(512)
         private set
+    /** Download scheduler profile label (High Speed / Balanced / Low Data). */
+    var downloadProfile by mutableStateOf("Balanced")
+        private set
+    var wifiOnlyDownloads by mutableStateOf(false)
+        private set
 
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("airbooks", Context.MODE_PRIVATE)
@@ -58,6 +63,8 @@ object Prefs {
         mobileDataWarning = sp.getBoolean("mobileDataWarning", true)
         suspendThumbsLowData = sp.getBoolean("suspendThumbsLowData", true)
         maxCacheMb = sp.getInt("maxCacheMb", 512)
+        downloadProfile = sp.getString("downloadProfile", "Balanced") ?: "Balanced"
+        wifiOnlyDownloads = sp.getBoolean("wifiOnlyDownloads", false)
     }
 
     private fun modeOf(v: String?): StreamingMode =
@@ -88,6 +95,8 @@ object Prefs {
     fun updateMobileDataWarning(v: Boolean) { mobileDataWarning = v; sp.edit().putBoolean("mobileDataWarning", v).apply() }
     fun updateSuspendThumbsLowData(v: Boolean) { suspendThumbsLowData = v; sp.edit().putBoolean("suspendThumbsLowData", v).apply() }
     fun updateMaxCacheMb(v: Int) { maxCacheMb = v; sp.edit().putInt("maxCacheMb", v).apply() }
+    fun updateDownloadProfile(v: String) { downloadProfile = v; sp.edit().putString("downloadProfile", v).apply() }
+    fun updateWifiOnlyDownloads(v: Boolean) { wifiOnlyDownloads = v; sp.edit().putBoolean("wifiOnlyDownloads", v).apply() }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
         sp.edit().putInt("prefetchMb", mb).apply()

@@ -228,14 +228,32 @@ object Tg {
 
     // ───────────────────────────── files: downloading ─────────────────────────────
 
+    /** Hook for download-error responses (TdApi.Error replies to DownloadFile). */
+    @Volatile var onDownloadError: ((Int, String) -> Unit)? = null
+
     /**
      * Ask TDLib to fetch [limit] bytes starting at [offset] (limit 0 = to the end).
-     * Progress is delivered through UpdateFile events. Priority 1..32 (32 = most urgent).
+     * Progress is delivered through UpdateFile events. Priority 1..32 (32 = most urgent),
+     * **0 parks the transfer** (TDLib stops fetching but keeps the downloaded prefix, so a
+     * later re-issue resumes without re-transferring a single byte).
      */
     fun download(id: Int, priority: Int = 1, offset: Long = 0, limit: Long = 0) {
         client.send(TdApi.DownloadFile(id, priority, offset, limit, false)) { r ->
-            if (r is TdApi.File) fileMap[r.id] = r
+            when (r) {
+                is TdApi.File -> fileMap[r.id] = r
+                is TdApi.Error -> onDownloadError?.invoke(id, "${r.code}: ${r.message}")
+                else -> {}
+            }
         }
+    }
+
+    /**
+     * Documented as mandatory by TDLib ("must be called whenever the network is changed, even if
+     * the network type remains the same"): forces connections to reopen instead of stalling on
+     * stale sockets after Wi-Fi <-> mobile-data or access-point changes.
+     */
+    fun setNetworkType(type: TdApi.NetworkType?) {
+        runCatching { client.send(TdApi.SetNetworkType(type)) {} }
     }
 
     fun cancelDownload(id: Int) {
@@ -254,11 +272,33 @@ object Tg {
         val n = streamUsers[id]?.decrementAndGet() ?: 0
         if (n <= 0) {
             streamUsers.remove(id)
-            cancelDownload(id)
+            // Never cancel while a download job still needs this file.
+            if ((downloadUsers[id]?.get() ?: 0) <= 0) cancelDownload(id)
         }
     }
 
     fun isStreaming(id: Int): Boolean = (streamUsers[id]?.get() ?: 0) > 0
+
+    // ── download sessions: refcounted separately from streaming so cancelling a download can
+    //    never cancel the player's window, and vice versa.
+    private val downloadUsers = ConcurrentHashMap<Int, java.util.concurrent.atomic.AtomicInteger>()
+
+    fun beginDownload(id: Int) {
+        downloadUsers.computeIfAbsent(id) { java.util.concurrent.atomic.AtomicInteger(0) }.incrementAndGet()
+    }
+
+    fun endDownload(id: Int) {
+        val n = downloadUsers[id]?.decrementAndGet() ?: 0
+        if (n <= 0) {
+            downloadUsers.remove(id)
+            if (!isStreaming(id)) cancelDownload(id)
+        }
+    }
+
+    fun isDownloadActive(id: Int): Boolean = (downloadUsers[id]?.get() ?: 0) > 0
+
+    /** Event-fed map lookup only — never blocks on GetFile (used by the download loop). */
+    fun peekFile(id: Int): TdApi.File? = fileMap[id]
 
     /** True on mobile/metered data (best effort; false if it cannot be determined). */
     fun isMetered(): Boolean = try {

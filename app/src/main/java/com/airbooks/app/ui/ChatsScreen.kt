@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Groups
@@ -58,7 +59,7 @@ import com.airbooks.app.tg.Tg
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
+fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit, onDownloads: () -> Unit) {
     val chats by Tg.chats.collectAsState()
     var searching by remember { mutableStateOf(false) }
     var q by remember { mutableStateOf("") }
@@ -98,6 +99,7 @@ fun ChatsScreen(onOpen: (ChatRow) -> Unit, onSettings: () -> Unit) {
                 NavigationBarItem(selected = selectedNav == "Discover", onClick = { selectedNav = "Discover"; chatFilter = "All" }, icon = { Icon(Icons.Filled.Explore, null) }, label = { Text("Discover") })
                 NavigationBarItem(selected = selectedNav == "Chats", onClick = { selectedNav = "Chats"; chatFilter = "All" }, icon = { Icon(Icons.Filled.Chat, null) }, label = { Text("Chats") })
                 NavigationBarItem(selected = selectedNav == "Search", onClick = { selectedNav = "Search"; searching = true }, icon = { Icon(Icons.Filled.Search, null) }, label = { Text("Search") })
+                NavigationBarItem(selected = false, onClick = onDownloads, icon = { Icon(Icons.Filled.Download, null) }, label = { Text("Downloads") })
                 NavigationBarItem(selected = false, onClick = onSettings, icon = { Icon(Icons.Filled.Settings, null) }, label = { Text("Settings") })
             }
         },

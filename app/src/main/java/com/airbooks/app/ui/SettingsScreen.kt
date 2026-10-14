@@ -13,6 +13,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import com.airbooks.app.download.DownloadManager
+import com.airbooks.app.download.DownloadScheduler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
@@ -149,6 +152,17 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+            // ── Downloads ────────────────────────────────────────────────────────
+            SectionTitle("Downloads")
+            SettingsGroup {
+                SettingRow(Icons.Filled.Download, "Download profile", Prefs.downloadProfile) {
+                    dialog = "Download Profile"
+                }
+                SwitchRow("Wi-Fi-only downloads", "The queue parks instead of using mobile data", Prefs.wifiOnlyDownloads) {
+                    DownloadManager.setWifiOnly(it)
+                }
+            }
+
             // ── App preferences ──────────────────────────────────────────────────
             SectionTitle("App Preferences")
             SettingsGroup {
@@ -173,10 +187,11 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 
     when (dialog) {
-        "Default video mode", "App Theme", "Playback Speed" -> {
+        "Default video mode", "App Theme", "Playback Speed", "Download Profile" -> {
             val choices: List<String> = when (dialog) {
                 "Default video mode" -> StreamingMode.values().map { it.label }
                 "App Theme" -> listOf("System Default", "Light", "Dark")
+                "Download Profile" -> DownloadScheduler.Profile.values().map { it.label }
                 else -> listOf("0.5", "0.75", "1.0", "1.25", "1.5", "2.0")
             }
             AlertDialog(
@@ -188,6 +203,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             val selected = when (dialog) {
                                 "Default video mode" -> Prefs.streamingMode.label == choice
                                 "App Theme" -> Prefs.themeMode == choice
+                                "Download Profile" -> Prefs.downloadProfile == choice
                                 else -> Prefs.playbackSpeed == choice.toFloatOrNull()
                             }
                             Card(
@@ -197,6 +213,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                                             StreamingMode.values().first { it.label == choice }
                                         )
                                         "App Theme" -> Prefs.setTheme(choice)
+                                        "Download Profile" -> DownloadManager.setProfile(
+                                            DownloadScheduler.Profile.values().first { it.label == choice }
+                                        )
                                         else -> Prefs.updatePlaybackSpeed(choice.toFloatOrNull() ?: 1f)
                                     }
                                     dialog = ""

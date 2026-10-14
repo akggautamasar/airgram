@@ -153,17 +153,40 @@ flagged and excluded. Official-Telegram comparison is manual: Telegram's own dow
 message file, timed by the harness stopwatch from tap to "done", same controls. **These runs need
 the phone; CI cannot produce them.**
 
-## 7. Downloads UI + service (brief §6–§7) — implemented in `download/DownloadManager.kt`,
-`download/DownloadService.kt` (foreground `dataSync`), `ui/DownloadsScreen.kt` + nav entry:
-active/pending/completed/failed lists, per-file speed/%/bytes/size/ETA, aggregate speed,
-pause/resume/cancel/retry/boost, history, storage usage + duplicate detection, open/share/delete
-via FileProvider, notification with aggregate speed, queue reconciled with TDLib on bind, and a
-file is COMPLETED only after size check + SHA-256 of the final path.
+## 7. Downloads UI + service (brief §6–§7) — implemented files
+
+- `download/Scheduler.kt` — pure core (profiles, adaptive concurrency, fairness, boost, backoff,
+  persistence, `SchedulePlan` with TDLib priorities 8..30, park = priority 0).
+- `download/DownloadManager.kt` — TDLib glue: 500 ms control loop applying plans via
+  `downloadFile(id, priority, 0, 0)`; progress from `updateFile` (no polling); TTFF/peak/
+  redundant-byte detection from prefix deltas; validation-gated completion; queue persisted to
+  `files/download_queue.tsv`; `NetworkMonitor` pushes `setNetworkType` on every connectivity
+  change and drives metered/Wi-Fi-only policy; playback-aware concurrency via
+  `StreamingRuntime` + `playbackPressure()`; separate download vs stream refcounts so cancelling
+  one never cancels the other.
+- `download/DownloadService.kt` — `dataSync` foreground service, 1 Hz notification with aggregate
+  speed; started/stopped with activeCount.
+- `download/Validation.kt` — pure integrity rules (exists/size, SHA-256, same-content).
+- `bench/Trial.kt` + `bench/Bench.kt` — trial model + on-device recorder → `files/bench/trials.csv`
+  (TTFF, completion, sustained vs peak MB/s, retries, redundant bytes, process CPU ms from
+  /proc/self/stat, battery delta, network, concurrency, profile); export/share from Downloads.
+- `ui/DownloadsScreen.kt` — active/pending/completed/failed, per-file speed/%/bytes/size/ETA,
+  aggregate speed, profile chips, scenario tag chips, CSV export, pause/resume/cancel/retry/
+  priority, open/share/save/delete via FileProvider, storage usage + duplicate detection.
+- Nav: bottom-bar "Downloads" item (`ChatsScreen`), per-file download buttons (`FilesScreen`),
+  Settings → Downloads (profile, Wi-Fi-only). Manifest: `FOREGROUND_SERVICE_DATA_SYNC` +
+  `DownloadService` (`foregroundServiceType="dataSync"`); FileProvider paths extended.
+- A file is shown COMPLETED only after `FileValidation.isValid` on the final path; SHA-256 runs
+  only on finished files, off the download path.
 
 ## 8. Tests & build
 JVM: `SchedulerTest` (dedupe, caps, fairness, starvation, boost, backoff, adaptivity bounds,
-progress/ETA, pause/resume/cancel, persistence) + existing `StreamingPolicyTest`. CI runs both
-plus `:app:assembleRelease` on every push.
+progress/ETA, pause/resume/cancel, persistence), `DownloadFlowTest` (interruption→resume without
+re-transfer, cancel, process-death restore, completed-file integrity incl. SHA-256 vector,
+streaming contention shrink/restore, no double-active job, trial CSV layout) + existing
+`StreamingPolicyTest`. CI runs all of them plus `:app:assembleRelease` on every push.
+Device-only acceptance (real transfers, screen-off, official-Telegram comparison) follows the
+protocol in §6 and cannot be executed in CI.
 
 ## 9. Results (device runs — to be filled)
 

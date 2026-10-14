@@ -225,6 +225,11 @@ class DownloadScheduler(
         concurrency = concurrency.coerceIn(p.minConcurrency, p.maxConcurrency)
     }
 
+    /** Sustained rebuffering during playback: give the player back a slot immediately. */
+    fun playbackPressure() {
+        if (concurrency > profile.minConcurrency) concurrency--
+    }
+
     // ───────────────────────────── the schedule ─────────────────────────────
 
     /**
