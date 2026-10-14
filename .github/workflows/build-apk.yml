@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tdlib-out
-          key: tdlib-android-${{ steps.td.outputs.sha }}
+          key: tdlib-android-v2-${{ steps.td.outputs.sha }}
 
       - name: Build TDLib for Android (official Docker recipe, first run only, ~30-60 min)
         if: steps.cache.outputs.cache-hit != 'true'

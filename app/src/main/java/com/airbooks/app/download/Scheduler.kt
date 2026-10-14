@@ -220,7 +220,7 @@ class DownloadScheduler(
         return cap.coerceAtLeast(profile.minConcurrency)
     }
 
-    fun setProfile(p: Profile) {
+    fun updateProfile(p: Profile) {
         profile = p
         concurrency = concurrency.coerceIn(p.minConcurrency, p.maxConcurrency)
     }

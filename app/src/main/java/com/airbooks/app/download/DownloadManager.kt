@@ -59,7 +59,7 @@ object DownloadManager {
         if (ctx != null) return
         ctx = context.applicationContext
         Bench.init(context)
-        scheduler.setProfile(profileOf(Prefs.downloadProfile))
+        scheduler.updateProfile(profileOf(Prefs.downloadProfile))
         scheduler.wifiOnly = Prefs.wifiOnlyDownloads
         runCatching { queueFile?.takeIf { it.exists() }?.let { scheduler.fromPersist(it.readText()) } }
         Tg.onDownloadError = { id, msg ->
@@ -81,7 +81,7 @@ object DownloadManager {
             ?: DownloadScheduler.Profile.BALANCED
 
     fun setProfile(p: DownloadScheduler.Profile) {
-        scheduler.setProfile(p)
+        scheduler.updateProfile(p)
         Prefs.updateDownloadProfile(p.label)
         reschedule()
     }
