@@ -189,6 +189,12 @@ fun OtherScreen(item: Media, onBack: () -> Unit) {
             Text(item.name, style = MaterialTheme.typography.titleMedium)
             Text("${fmtSize(item.size)} · ${item.mime.ifBlank { "unknown type" }}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+            Text(
+                "This format can't be streamed in-app, so it is downloaded first (unlike videos/audio, which stream). The file stays in AirGram's cache, not your Downloads folder.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
             when {
                 path != null -> Button(onClick = { openExternal(ctx, path!!, item.mime) }) { Text("Open with…") }
                 started -> LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())

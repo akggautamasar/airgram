@@ -242,6 +242,73 @@ object Tg {
         client.send(TdApi.CancelDownloadFile(id, false)) {}
     }
 
+    // ── streaming sessions: reference-counted so concurrent readers of the same file
+    //    never cancel each other's window. Only the last reader stops the download.
+    private val streamUsers = ConcurrentHashMap<Int, java.util.concurrent.atomic.AtomicInteger>()
+
+    fun beginStream(id: Int) {
+        streamUsers.computeIfAbsent(id) { java.util.concurrent.atomic.AtomicInteger(0) }.incrementAndGet()
+    }
+
+    fun endStream(id: Int) {
+        val n = streamUsers[id]?.decrementAndGet() ?: 0
+        if (n <= 0) {
+            streamUsers.remove(id)
+            cancelDownload(id)
+        }
+    }
+
+    fun isStreaming(id: Int): Boolean = (streamUsers[id]?.get() ?: 0) > 0
+
+    /** True on mobile/metered data (best effort; false if it cannot be determined). */
+    fun isMetered(): Boolean = try {
+        val cm = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        cm.isActiveNetworkMetered
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Force a fresh GetFile (recovers from expired/invalid remote file references). */
+    fun refreshFileBlocking(id: Int): TdApi.File = sendBlocking(TdApi.GetFile(id)).also { fileMap[id] = it }
+
+    fun cacheBytes(): Long = try {
+        filesDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    } catch (_: Exception) {
+        0L
+    }
+
+    /**
+     * Deletes fully-downloaded Telegram files that are not currently streaming, via TDLib's own
+     * DeleteFile (safe: TDLib keeps its database consistent, unlike deleting files on disk).
+     * Returns how many files were deleted.
+     */
+    fun clearStreamingCache(): Int {
+        var n = 0
+        for ((id, f) in fileMap) {
+            if (isStreaming(id)) continue
+            if (f.local.isDownloadingCompleted || f.local.downloadedSize > 0) {
+                client.send(TdApi.DeleteFile(id)) {}
+                n++
+            }
+        }
+        return n
+    }
+
+    /** Best-effort enforcement of the user's temporary-cache cap: oldest known files first. */
+    fun enforceCacheLimit(maxBytes: Long) {
+        if (maxBytes <= 0) return
+        var over = cacheBytes() - maxBytes
+        if (over <= 0) return
+        val candidates = fileMap.entries
+            .filter { (id, f) -> !isStreaming(id) && (f.local.isDownloadingCompleted || f.local.downloadedSize > 0) }
+            .sortedBy { it.value.local.downloadedSize }
+        for ((id, f) in candidates) {
+            if (over <= 0) break
+            client.send(TdApi.DeleteFile(id)) {}
+            over -= f.local.downloadedSize
+        }
+    }
+
     /** Downloads a whole (small) file and returns its local path. Used for thumbnails, images, PDFs. */
     suspend fun awaitDownload(id: Int, priority: Int = 1, onProgress: ((Float) -> Unit)? = null): String {
         var f = getFileFresh(id)

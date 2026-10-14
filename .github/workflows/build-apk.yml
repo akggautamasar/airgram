@@ -8,7 +8,11 @@ on:
         required: false
         default: ""
   push:
-    branches: [main]
+    branches: [main, 'arena/**']
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   build:
@@ -82,6 +86,20 @@ jobs:
             echo "No KEYSTORE_BASE64 secret: APK will be signed with a throw-away debug key."
           fi
 
+      - name: Run unit tests
+        run: |
+          set +e
+          gradle :app:testReleaseUnitTest --no-daemon 2>&1 | tail -n 120 > "$RUNNER_TEMP/test-tail.txt"
+          code=${PIPESTATUS[0]}
+          cat "$RUNNER_TEMP/test-tail.txt"
+          if [ "$code" != "0" ]; then
+            { echo "Unit tests failed on ${GITHUB_SHA}:"; echo; echo '```'; cat "$RUNNER_TEMP/test-tail.txt"; echo '```'; } > "$RUNNER_TEMP/issue.md"
+            gh issue create --title "CI: unit tests failed (${GITHUB_SHA::7})" --body-file "$RUNNER_TEMP/issue.md" || true
+            exit "$code"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Assemble release APK
         env:
           TG_API_ID: ${{ secrets.TG_API_ID }}
@@ -93,5 +111,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AirBooks-apk
+          name: AirGram-apk
           path: app/build/outputs/apk/release/*.apk

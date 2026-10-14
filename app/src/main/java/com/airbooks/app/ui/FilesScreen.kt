@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -59,7 +60,10 @@ import com.airbooks.app.tg.Kind
 import com.airbooks.app.tg.ListState
 import com.airbooks.app.tg.Media
 import com.airbooks.app.tg.Repo
+import com.airbooks.app.stream.StreamingMode
+import com.airbooks.app.stream.StreamingRuntime
 import com.airbooks.app.tg.Section
+import com.airbooks.app.tg.Tg
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -72,12 +76,18 @@ fun FilesScreen(
     onOpen: (Media, List<Media>) -> Unit,
 ) {
     var section by remember { mutableStateOf(Section.VIDEOS) }
+    var grid by remember { mutableStateOf(true) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var activeQuery by remember { mutableStateOf("") }
     LaunchedEffect(query) { delay(450); activeQuery = query.trim() }
 
     val st = remember(chatId, section, activeQuery) { Repo.state(chatId, section, activeQuery) }
+    // Low Data playback suspends thumbnail/preview work; Wi-Fi-only prefetch blocks it on mobile data.
+    val liveMode = if (StreamingRuntime.playbackActive) StreamingRuntime.activeMode else Prefs.effectiveMode()
+    val lowDataSuspends = liveMode == StreamingMode.LOW_DATA &&
+        Prefs.suspendThumbsLowData && StreamingRuntime.playbackActive
+    val thumbsOn = Prefs.autoThumbs && !lowDataSuspends && !(Prefs.wifiOnlyPrefetch && Tg.isMetered())
     val scope = rememberCoroutineScope()
     fun more() { scope.launch { Repo.loadMore(chatId, section, activeQuery, st) } }
     LaunchedEffect(st) { if (st.items.isEmpty() && !st.done) more() }
@@ -101,6 +111,9 @@ fun FilesScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { grid = !grid }) {
+                        Text(if (grid) "☰" else "▦", fontSize = 20.sp)
+                    }
                     IconButton(onClick = {
                         st.reset(); more()
                     }) { Icon(Icons.Filled.Refresh, "Refresh") }
@@ -118,10 +131,10 @@ fun FilesScreen(
                     Tab(selected = section == s, onClick = { section = s }, text = { Text(s.label) })
                 }
             }
-            if (section == Section.VIDEOS || section == Section.PHOTOS) {
-                MediaGrid(st, ::more) { onOpen(it, st.items.toList()) }
+            if (grid) {
+                MediaGrid(st, ::more, thumbsOn) { onOpen(it, st.items.toList()) }
             } else {
-                MediaList(st, ::more) { onOpen(it, st.items.toList()) }
+                MediaList(st, ::more, thumbsOn) { onOpen(it, st.items.toList()) }
             }
         }
     }
@@ -143,7 +156,7 @@ private fun Footer(st: ListState, onMore: () -> Unit) {
 }
 
 @Composable
-private fun MediaGrid(st: ListState, onMore: () -> Unit, onClick: (Media) -> Unit) {
+private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onClick: (Media) -> Unit) {
     val state = rememberLazyGridState()
     val nearEnd by remember {
         derivedStateOf {
@@ -165,7 +178,7 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, onClick: (Media) -> Uni
             Box(
                 Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick(m) }
             ) {
-                TgImage(m.thumbId, m.mini, Modifier.fillMaxSize(), enabled = Prefs.autoThumbs)
+                TgImage(m.thumbId, m.mini, Modifier.fillMaxSize(), enabled = thumbsOn)
                 if (m.kind == Kind.VIDEO) {
                     Text(
                         "▶ ${fmtDur(m.duration)}",
@@ -180,7 +193,7 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, onClick: (Media) -> Uni
 }
 
 @Composable
-private fun MediaList(st: ListState, onMore: () -> Unit, onClick: (Media) -> Unit) {
+private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onClick: (Media) -> Unit) {
     val state = rememberLazyListState()
     val nearEnd by remember {
         derivedStateOf {
@@ -196,7 +209,11 @@ private fun MediaList(st: ListState, onMore: () -> Unit, onClick: (Media) -> Uni
                 Modifier.fillMaxWidth().clickable { onClick(m) }.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(kindIcon(m.kind), fontSize = 24.sp)
+                if (m.thumbId != 0) {
+                    TgImage(m.thumbId, m.mini, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), enabled = thumbsOn)
+                } else {
+                    Text(kindIcon(m.kind), fontSize = 24.sp)
+                }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(m.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -207,6 +224,11 @@ private fun MediaList(st: ListState, onMore: () -> Unit, onClick: (Media) -> Uni
                     }.joinToString(" · ")
                     Text(meta, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (m.caption.isNotBlank()) {
+                        Text(m.caption, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }

@@ -52,7 +52,7 @@ sealed interface Screen {
     data object Chats : Screen
     data object Settings : Screen
     data class Files(val chatId: Long, val title: String) : Screen
-    data class Play(val item: Media) : Screen
+    data class Play(val item: Media, val queue: List<Media>, val chatTitle: String) : Screen
     data class Pdf(val item: Media) : Screen
     data class Other(val item: Media) : Screen
     data class Image(val items: List<Media>, val start: Media) : Screen
@@ -106,14 +106,14 @@ fun MainNav() {
             onBack = { pop() },
             onOpen = { m, all ->
                 when (m.kind) {
-                    Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m))
+                    Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m, all, s.title))
                     Kind.PDF -> push(Screen.Pdf(m))
                     Kind.IMAGE -> push(Screen.Image(all.filter { it.kind == Kind.IMAGE }, m))
                     Kind.OTHER -> push(Screen.Other(m))
                 }
             },
         )
-        is Screen.Play -> PlayerScreen(s.item, onBack = { pop() })
+        is Screen.Play -> PlayerScreen(s.item, s.queue, s.chatTitle, onBack = { pop() })
         is Screen.Pdf -> PdfScreen(s.item, onBack = { pop() })
         is Screen.Other -> OtherScreen(s.item, onBack = { pop() })
         is Screen.Image -> ImageScreen(s.items, s.start, onBack = { pop() })
