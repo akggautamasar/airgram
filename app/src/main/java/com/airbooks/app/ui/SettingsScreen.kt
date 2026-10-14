@@ -3,9 +3,9 @@ package com.airbooks.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -43,8 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.airbooks.app.BuildConfig
 import com.airbooks.app.Prefs
+import com.airbooks.app.stream.StreamingMode
+import com.airbooks.app.stream.StreamingRuntime
 import com.airbooks.app.tg.Tg
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,14 +63,20 @@ fun SettingsScreen(onBack: () -> Unit) {
     var refresh by remember { mutableIntStateOf(0) }
     var dialog by remember { mutableStateOf("") }
     var confirmLogout by remember { mutableStateOf(false) }
-    var hideLabels by remember { mutableStateOf(false) }
-    val playback = Prefs.playerEngine
-    val decoder = Prefs.videoDecoder
-    val theme = Prefs.themeMode
+    var clearedMsg by remember { mutableStateOf<String?>(null) }
+    val connection by Tg.connection.collectAsState()
 
     LaunchedEffect(refresh) {
-        cacheBytes = withContext(Dispatchers.IO) {
-            Tg.filesDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        cacheBytes = withContext(Dispatchers.IO) { Tg.cacheBytes() }
+    }
+
+    fun clearTempCache() {
+        scope.launch {
+            val n = withContext(Dispatchers.IO) { Tg.clearStreamingCache() }
+            // Bound the on-disk cache to the user's cap as well (oldest files first).
+            withContext(Dispatchers.IO) { Tg.enforceCacheLimit(Prefs.maxCacheMb * 1024L * 1024L) }
+            clearedMsg = "Removed $n cached file(s). Chats and login are untouched."
+            refresh++
         }
     }
 
@@ -78,119 +89,178 @@ fun SettingsScreen(onBack: () -> Unit) {
             Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SectionTitle("Community")
+            // ── Streaming ────────────────────────────────────────────────────────
+            SectionTitle("Streaming")
             SettingsGroup {
-                SettingRow(Icons.Filled.Settings, "Join Community", "Get help and discuss features") { dialog = "Community" }
+                SettingRow(Icons.Filled.PlayArrow, "Default video mode", Prefs.streamingMode.label) {
+                    dialog = "Default video mode"
+                }
+                SwitchRow("Remember last-used mode", "Start the player in the mode you last picked there", Prefs.rememberLastMode) {
+                    Prefs.setRememberLastMode(it)
+                }
+                SettingRow(Icons.Filled.PlayArrow, "Playback speed", "${Prefs.playbackSpeed}×") { dialog = "Playback Speed" }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("Streaming read-ahead cap (Normal)", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${Prefs.prefetchMb} MB · Low Data mode always uses a smaller window",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Slider(value = Prefs.prefetchMb.toFloat(), onValueChange = { Prefs.setPrefetch(it.toInt()) }, valueRange = 4f..64f, steps = 14)
+                }
+                SwitchRow("Wi-Fi-only prefetch", "No thumbnail/preview prefetching on mobile data (playback itself still streams)", Prefs.wifiOnlyPrefetch) {
+                    Prefs.setWifiOnlyPrefetch(it)
+                }
+                SwitchRow("Mobile-data warning", "Warn in the player when streaming on mobile data", Prefs.mobileDataWarning) {
+                    Prefs.setMobileDataWarning(it)
+                }
+                SwitchRow("Suspend thumbnails in Low Data", "While Low Data playback is active, stop thumbnail/preview work", Prefs.suspendThumbsLowData) {
+                    Prefs.setSuspendThumbsLowData(it)
+                }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("Maximum temporary cache", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${Prefs.maxCacheMb} MB · currently ${fmtSize(cacheBytes)} used",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Slider(value = Prefs.maxCacheMb.toFloat(), onValueChange = { Prefs.setMaxCacheMb(it.toInt()) }, valueRange = 128f..4096f, steps = 30)
+                }
+                SettingRow(Icons.Filled.Delete, "Clear temporary streaming cache", "Files Telegram re-downloads on demand; login/chats stay") {
+                    clearTempCache()
+                }
+                SettingRow(Icons.Filled.Settings, "Streaming diagnostics", "Throughput, buffering and cache state") {
+                    dialog = "Diagnostics"
+                }
             }
+            clearedMsg?.let {
+                Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+
+            // ── Data & storage ───────────────────────────────────────────────────
             SectionTitle("Data & Storage")
             SettingsGroup {
-                SettingRow(Icons.Filled.Settings, "Storage Usage", "${fmtSize(cacheBytes)} used") { dialog = "Storage Usage" }
-                SettingRow(Icons.Filled.Refresh, "Clear Cache", "Free up storage space") {
+                SettingRow(Icons.Filled.Settings, "Storage usage", "${fmtSize(cacheBytes)} used by cached Telegram files") { dialog = "Storage Usage" }
+                SettingRow(Icons.Filled.Refresh, "Enforce cache limit now", "Delete oldest cached files above ${Prefs.maxCacheMb} MB") {
                     scope.launch {
-                        withContext(Dispatchers.IO) { Tg.filesDir.deleteRecursively() }
-                        Tg.dropFileCache()
+                        withContext(Dispatchers.IO) { Tg.enforceCacheLimit(Prefs.maxCacheMb * 1024L * 1024L) }
                         refresh++
                     }
                 }
-                SettingRow(Icons.Filled.Delete, "Clear Download Cache", "Remove cached Telegram media files", destructive = true) { dialog = "Confirm Clear Cache" }
             }
-            SectionTitle("Playback & Streaming")
-            SettingsGroup {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text("Streaming prefetch", style = MaterialTheme.typography.titleMedium)
-                    Text("${Prefs.prefetchMb} MB · More buffering can help on slow networks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Slider(value = Prefs.prefetchMb.toFloat(), onValueChange = { Prefs.setPrefetch(it.toInt()) }, valueRange = 4f..64f, steps = 14)
-                }
-                SettingRow(Icons.Filled.PlayArrow, "Playback speed", "${Prefs.playbackSpeed}× (tap in player to cycle)") { dialog = "Playback Speed" }
-            }
+
+            // ── App preferences ──────────────────────────────────────────────────
             SectionTitle("App Preferences")
             SettingsGroup {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SettingIcon(Icons.Filled.Settings)
-                    Column(Modifier.weight(1f).padding(start = 16.dp)) { Text("Load media thumbnails") }
-                    Switch(checked = Prefs.autoThumbs, onCheckedChange = { Prefs.updateAutoThumbs(it) })
+                SwitchRow("Load media thumbnails", "Turn off to save data in media lists", Prefs.autoThumbs) {
+                    Prefs.updateAutoThumbs(it)
                 }
-                SettingRow(Icons.Filled.Settings, "Default Video Decoder", decoder) { dialog = "Default Video Decoder" }
-                SettingRow(Icons.Filled.PlayArrow, "Default Player Engine", playback) { dialog = "Default Player Engine" }
-                SettingRow(Icons.Filled.Settings, "App Theme", theme) { dialog = "App Theme" }
+                SettingRow(Icons.Filled.Settings, "App Theme", Prefs.themeMode) { dialog = "App Theme" }
             }
-            SectionTitle("Legal")
+
+            // ── Account ──────────────────────────────────────────────────────────
+            SectionTitle("Account")
             SettingsGroup {
-                SettingRow(Icons.Filled.Settings, "Privacy Policy") { dialog = "Privacy Policy" }
-                SettingRow(Icons.Filled.Settings, "Terms & Conditions") { dialog = "Terms & Conditions" }
-            }
-            SectionTitle("About")
-            SettingsGroup { SettingRow(Icons.Filled.Settings, "Visit Website") { dialog = "Website" } }
-            SectionTitle("Account & Security")
-            SettingsGroup {
-                SettingRow(Icons.Filled.Refresh, "Restore Purchase", "Re-verify premium status manually") { dialog = "Restore Purchase" }
                 SettingRow(Icons.Filled.Delete, "Log Out / Switch Account", destructive = true) { confirmLogout = true }
             }
-            Text("AirGram • Storage: ${fmtSize(cacheBytes)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+            Text(
+                "AirGram ${BuildConfig.VERSION_NAME} · Streaming via Telegram/TDLib + Media3 ExoPlayer",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(12.dp),
+            )
         }
     }
 
-    if (dialog == "Confirm Clear Cache") AlertDialog(
-        onDismissRequest = { dialog = "" },
-        title = { Text("Clear downloaded cache?") },
-        text = { Text("This removes cached Telegram media and thumbnails only. Your chats and Telegram account remain intact.") },
-        confirmButton = { TextButton(onClick = { dialog = ""; scope.launch { withContext(Dispatchers.IO) { Tg.filesDir.deleteRecursively(); Tg.filesDir.mkdirs() }; Tg.dropFileCache(); refresh++ } }) { Text("Clear cache") } },
-        dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Cancel") } },
-    )
-
-    if (dialog.isNotEmpty() && dialog != "Confirm Clear Cache") {
-        val choices = when (dialog) {
-            "Default Player Engine" -> listOf("ExoPlayer")
-            "Default Video Decoder" -> listOf("Auto (Recommended)", "Hardware", "Software")
-            "App Theme" -> listOf("System Default", "Light", "Dark")
-            "Playback Speed" -> listOf("0.5", "0.75", "1.0", "1.25", "1.5", "2.0")
-            else -> emptyList()
-        }
-        AlertDialog(
-            onDismissRequest = { dialog = "" },
-            title = { Text(dialog) },
-            text = {
-                if (choices.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    choices.forEach { choice ->
-                        val selected = when (dialog) {
-                            "Default Player Engine" -> Prefs.playerEngine == choice
-                            "Default Video Decoder" -> Prefs.videoDecoder == choice
-                            "Playback Speed" -> Prefs.playbackSpeed == choice.toFloatOrNull()
-                            else -> Prefs.themeMode == choice
-                        }
-                        Card(
-                            modifier = Modifier.fillMaxWidth().clickable {
-                                when (dialog) {
-                                    "Default Player Engine" -> Prefs.updatePlayerEngine(choice)
-                                    "Default Video Decoder" -> Prefs.updateVideoDecoder(choice)
-                                    "App Theme" -> Prefs.setTheme(choice)
-                                    "Playback Speed" -> Prefs.updatePlaybackSpeed(choice.toFloatOrNull() ?: 1f)
+    when (dialog) {
+        "Default video mode", "App Theme", "Playback Speed" -> {
+            val choices: List<String> = when (dialog) {
+                "Default video mode" -> StreamingMode.values().map { it.label }
+                "App Theme" -> listOf("System Default", "Light", "Dark")
+                else -> listOf("0.5", "0.75", "1.0", "1.25", "1.5", "2.0")
+            }
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text(dialog) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        choices.forEach { choice ->
+                            val selected = when (dialog) {
+                                "Default video mode" -> Prefs.streamingMode.label == choice
+                                "App Theme" -> Prefs.themeMode == choice
+                                else -> Prefs.playbackSpeed == choice.toFloatOrNull()
+                            }
+                            Card(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    when (dialog) {
+                                        "Default video mode" -> Prefs.setDefaultMode(
+                                            StreamingMode.values().first { it.label == choice }
+                                        )
+                                        "App Theme" -> Prefs.setTheme(choice)
+                                        else -> Prefs.updatePlaybackSpeed(choice.toFloatOrNull() ?: 1f)
+                                    }
+                                    dialog = ""
+                                },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                                shape = RoundedCornerShape(18.dp),
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text(choice, style = MaterialTheme.typography.titleMedium)
+                                    if (dialog == "Default video mode") {
+                                        Text(
+                                            if (choice == StreamingMode.NORMAL.label) {
+                                                "Original quality, larger read-ahead for smooth playback."
+                                            } else {
+                                                "Faster start, smaller read-ahead, less data on slow networks."
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                    if (selected) Text("✓ Selected", color = MaterialTheme.colorScheme.primary)
                                 }
-                                dialog = ""
-                            },
-                            colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
-                            shape = RoundedCornerShape(18.dp),
-                        ) {
-                            Column(Modifier.padding(14.dp)) {
-                                Text(choice, style = MaterialTheme.typography.titleMedium)
-                                if (dialog == "Default Player Engine") Text(
-                                    if (choice == "ExoPlayer") "Fast, hardware-accelerated. Best for most files." else "Universal playback for more codecs.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                if (selected) Text("✓ Selected", color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
-                } else Text(when (dialog) {
-                    "Clear Cache" -> "Cached thumbnails and media files are removed."
-                    "Storage Usage" -> "${fmtSize(cacheBytes)} currently used by local Telegram files."
-                    "Confirm Clear Cache" -> "Remove downloaded cached files and thumbnails? Telegram messages and account data will not be deleted."
-                    else -> "This option is not configured yet."
-                })
-            },
+                },
+                confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
+            )
+        }
+        "Storage Usage" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Storage usage") },
+            text = { Text("${fmtSize(cacheBytes)} currently used by local Telegram files (streaming cache). Limit: ${Prefs.maxCacheMb} MB.") },
             confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
         )
+        "Diagnostics" -> {
+            val kbps = (StreamingRuntime.estimator.ewmaBps / 1000).toInt()
+            AlertDialog(
+                onDismissRequest = { dialog = "" },
+                title = { Text("Streaming diagnostics") },
+                text = {
+                    Text(
+                        buildString {
+                            appendLine("Active mode: ${StreamingRuntime.activeMode.label} (effective: ${Prefs.effectiveMode().label})")
+                            appendLine("Playback active: ${StreamingRuntime.playbackActive}")
+                            appendLine("Active file ID: ${StreamingRuntime.activeFileId}")
+                            appendLine("Estimated throughput: ${if (kbps > 0) "$kbps kbps" else "no samples yet"} (${StreamingRuntime.estimator.sampleCount} samples)")
+                            appendLine("Rebuffers this session: ${StreamingRuntime.rebufferCount}")
+                            appendLine("Last streaming error: ${StreamingRuntime.lastError ?: "none"}")
+                            appendLine("Telegram connection: ${connection.ifBlank { "connected" }}")
+                            appendLine("Metered connection: ${Tg.isMetered()}")
+                            appendLine("Streaming cache: ${fmtSize(cacheBytes)} / ${Prefs.maxCacheMb} MB")
+                            appendLine("Cache folder: ${Tg.filesDir.absolutePath}")
+                            append("App: AirGram ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                        }
+                    )
+                },
+                confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
+            )
+        }
     }
+
     if (confirmLogout) AlertDialog(
         onDismissRequest = { confirmLogout = false },
         title = { Text("Log out?") },
@@ -201,9 +271,26 @@ fun SettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
+private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BoxIcon(Icons.Filled.Settings)
+        Column(Modifier.weight(1f).padding(start = 16.dp, end = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
 private fun SectionTitle(title: String) {
-    Text(title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(start = 12.dp, top = 10.dp, bottom = 2.dp))
+    Text(
+        title, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(start = 12.dp, top = 10.dp, bottom = 2.dp),
+    )
 }
 
 @Composable
@@ -214,13 +301,8 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SettingIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, destructive: Boolean = false) {
-    BoxIcon(icon, destructive)
-}
-
-@Composable
-private fun BoxIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, destructive: Boolean = false) {
-    androidx.compose.foundation.layout.Box(
+private fun BoxIcon(icon: ImageVector, destructive: Boolean = false) {
+    Box(
         Modifier.size(52.dp).clip(RoundedCornerShape(17.dp))
             .background(if (destructive) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center,
@@ -229,7 +311,7 @@ private fun BoxIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, destr
 
 @Composable
 private fun SettingRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     title: String,
     subtitle: String? = null,
     destructive: Boolean = false,
@@ -239,7 +321,7 @@ private fun SettingRow(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingIcon(icon, destructive)
+        BoxIcon(icon, destructive)
         Column(Modifier.weight(1f).padding(start = 16.dp, end = 8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
