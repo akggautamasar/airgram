@@ -41,9 +41,9 @@ object Prefs {
         autoThumbs = v
         sp.edit().putBoolean("autoThumbs", v).apply()
     }
-    fun setPlaybackSpeed(value: Float) { playbackSpeed = value; sp.edit().putFloat("playbackSpeed", value).apply() }
-    fun setPlayerEngine(value: String) { playerEngine = value; sp.edit().putString("playerEngine", value).apply() }
-    fun setVideoDecoder(value: String) { videoDecoder = value; sp.edit().putString("videoDecoder", value).apply() }
+    fun updatePlaybackSpeed(value: Float) { playbackSpeed = value; sp.edit().putFloat("playbackSpeed", value).apply() }
+    fun updatePlayerEngine(value: String) { playerEngine = value; sp.edit().putString("playerEngine", value).apply() }
+    fun updateVideoDecoder(value: String) { videoDecoder = value; sp.edit().putString("videoDecoder", value).apply() }
     fun setTheme(mode: String) {
         themeMode = mode
         sp.edit().putString("themeMode", mode).apply()
