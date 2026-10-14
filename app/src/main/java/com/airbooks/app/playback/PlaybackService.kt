@@ -34,6 +34,7 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val mode = Prefs.effectiveMode()
+        StreamingRuntime.activeMode = mode
         val decision = PlaybackPolicy().decide(
             PolicyInput(
                 throughputBps = StreamingRuntime.estimator.ewmaBps,

@@ -46,7 +46,10 @@ import java.io.RandomAccessFile
  */
 @UnstableApi
 class TdDataSource(
-    private val modeProvider: () -> StreamingMode = { Prefs.effectiveMode() },
+    // Live session mode: the in-player selector writes StreamingRuntime.activeMode, so mode
+    // switches change real network behaviour immediately, regardless of the
+    // "remember last-used mode" preference (that only picks the *starting* mode).
+    private val modeProvider: () -> StreamingMode = { StreamingRuntime.activeMode },
     private val policy: PlaybackPolicy = PlaybackPolicy(),
 ) : BaseDataSource(/* isNetwork = */ true) {
 
@@ -240,7 +243,7 @@ class TdDataSource(
 /** Factory so the player/service shares one policy and the live mode from [Prefs]. */
 @UnstableApi
 class TdDataSourceFactory(
-    private val modeProvider: () -> StreamingMode = { Prefs.effectiveMode() },
+    private val modeProvider: () -> StreamingMode = { StreamingRuntime.activeMode },
 ) : DataSource.Factory {
     private val policy = PlaybackPolicy()
     override fun createDataSource(): DataSource = TdDataSource(modeProvider, policy)

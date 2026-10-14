@@ -1,9 +1,15 @@
 package com.airbooks.app.ui
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.pm.ActivityInfo
 import android.view.View
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -107,7 +113,9 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
 
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var controllerFuture by remember { mutableStateOf<ListenableFuture<MediaController>?>(null) }
-    var mode by remember { mutableStateOf(Prefs.effectiveMode()) }
+    var mode by remember {
+        mutableStateOf(if (StreamingRuntime.playbackActive) StreamingRuntime.activeMode else Prefs.effectiveMode())
+    }
     var error by remember { mutableStateOf<String?>(null) }
     var buffering by remember { mutableStateOf(true) }
     var aheadMs by remember { mutableLongStateOf(0L) }
@@ -128,6 +136,16 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         if (d > 0 && pos > 5_000 && pos < d - 10_000) Prefs.setPos(key, pos) else if (d > 0) Prefs.setPos(key, 0)
     }
 
+    // Background audio needs a visible media notification; ask once on Android 13+.
+    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(isAudio) {
+        if (isAudio && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     // Connect to the playback service (async; UI renders as soon as the controller arrives).
     LaunchedEffect(Unit) {
         val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
@@ -145,6 +163,9 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
+                    StreamingRuntime.playbackActive = false
+                }
                 if (state == Player.STATE_BUFFERING && wasReady) {
                     StreamingRuntime.rebufferCount++
                 }
