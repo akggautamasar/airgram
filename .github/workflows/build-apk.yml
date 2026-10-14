@@ -111,5 +111,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AirBooks-apk
+          name: AirGram-apk
           path: app/build/outputs/apk/release/*.apk

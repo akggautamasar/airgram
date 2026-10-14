@@ -1,4 +1,4 @@
-# AirBooks (Android)
+# AirGram (Android)
 
 Native Android client for your Telegram chats: log in with your phone number, see every chat,
 and **stream** videos / music / PDFs / photos straight from Telegram — no backend, no server
@@ -32,7 +32,7 @@ deployment, nothing downloaded up front.
      then `base64 -w0 release.keystore` for the secret.
 3. Actions → **Build APK** → Run workflow. The first run compiles TDLib from Telegram's official source
    (~30–60 min); it is cached afterwards and later builds take a few minutes.
-4. Download the `AirBooks-apk` artifact, unzip, install the APK.
+4. Download the `AirGram-apk` artifact, unzip, install the APK.
 
 Local build: put `TG_API_ID=...` and `TG_API_HASH=...` in `local.properties`, copy TDLib's `libtdjni.so` into
 `app/src/main/jniLibs/<abi>/` and its Java files into `app/src/main/java/org/drinkless/tdlib/`
@@ -50,7 +50,9 @@ app/src/main/java/com/airbooks/app/
 
 ## Known limits / ideas
 
-* Audio stops when the screen/app is backgrounded (no media-session service yet).
+* Audio keeps playing in the background via a media-session service; videos/audio stream in
+  Normal or Low Data mode (player + Settings → Streaming). See STREAMING.md for the design,
+  honest limitations (no adaptive bitrate — Telegram files are single-quality) and test status.
 * Playback depends on the phone's codecs (e.g. some MKV/HEVC/AC3 files); no transcoding.
 * Archived chats and chat folders are not listed yet (main list only). EPUB reader not included.
 * Image viewer has no pinch-zoom yet.
