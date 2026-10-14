@@ -26,7 +26,10 @@ jobs:
         id: td
         run: |
           REF="${{ inputs.td_ref }}"
-          REF="${REF:-HEAD}"
+          # Pinned by default: tdlib/td master moves several times a day, which invalidated the
+          # TDLib build cache on almost every run (30-60 min Docker rebuilds). Pinning keeps
+          # builds reproducible and cache-warm; override with the td_ref input when needed.
+          REF="${REF:-f06f0f9cd1ad5f27863dba8069343390eb398074}"
           SHA=$(git ls-remote https://github.com/tdlib/td.git "$REF" | head -n1 | cut -f1)
           if [ -z "$SHA" ]; then SHA="$REF"; fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"

@@ -237,7 +237,11 @@ object Tg {
      * **0 parks the transfer** (TDLib stops fetching but keeps the downloaded prefix, so a
      * later re-issue resumes without re-transferring a single byte).
      */
+    /** False until createClient() ran (i.e. TG_API_ID != 0); guards background loops. */
+    val isReady: Boolean get() = ::client.isInitialized
+
     fun download(id: Int, priority: Int = 1, offset: Long = 0, limit: Long = 0) {
+        if (!isReady) return
         client.send(TdApi.DownloadFile(id, priority, offset, limit, false)) { r ->
             when (r) {
                 is TdApi.File -> fileMap[r.id] = r
