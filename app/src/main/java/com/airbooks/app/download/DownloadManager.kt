@@ -290,8 +290,8 @@ object NetworkMonitor {
                 val metered = cm.isActiveNetworkMetered
                 val type: TdApi.NetworkType? = when {
                     caps == null -> TdApi.NetworkTypeNone()
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> TdApi.NetworkTypeWifi()
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> TdApi.NetworkTypeMobileData()
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> TdApi.NetworkTypeWiFi()
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> TdApi.NetworkTypeMobile()
                     else -> TdApi.NetworkTypeOther()
                 }
                 onChange(metered, type)
@@ -308,6 +308,6 @@ object NetworkMonitor {
 
     private fun emit0(cm: ConnectivityManager, onChange: (Boolean, TdApi.NetworkType?) -> Unit) {
         val metered = cm.isActiveNetworkMetered
-        onChange(metered, if (metered) TdApi.NetworkTypeMobileData() else TdApi.NetworkTypeWifi())
+        onChange(metered, if (metered) TdApi.NetworkTypeMobile() else TdApi.NetworkTypeWiFi())
     }
 }

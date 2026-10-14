@@ -27,12 +27,11 @@ class DownloadService : Service() {
     override fun onCreate() {
         super.onCreate()
         val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getChannel(CHANNEL) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW)
-                    .apply { setShowBadge(false) },
-            )
-        }
+        // Idempotent: re-creating an existing channel is a no-op.
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL, "Downloads", NotificationManager.IMPORTANCE_LOW)
+                .apply { setShowBadge(false) },
+        )
         scope.launch {
             while (true) {
                 refresh(nm)
