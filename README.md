@@ -56,3 +56,8 @@ app/src/main/java/com/airbooks/app/
 * Playback depends on the phone's codecs (e.g. some MKV/HEVC/AC3 files); no transcoding.
 * Archived chats and chat folders are not listed yet (main list only). EPUB reader not included.
 * Image viewer has no pinch-zoom yet.
+
+## Downloads & speed programme
+Managed downloads (queue, concurrency profiles, pause/resume/retry, background `dataSync`
+service), the Downloads screen, the on-device benchmark harness and the TDLib 1.8.68 bottleneck
+audit are documented in DOWNLOADS.md.
