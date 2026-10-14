@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -51,7 +52,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,6 +111,7 @@ fun ChatsScreen(
     var global by remember { mutableStateOf<List<Media>>(emptyList()) }
     var globalOffset by remember { mutableStateOf("") }
     var globalLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(q, selectedNav) {
         if (selectedNav != "Search" || q.isBlank()) { global = emptyList(); globalOffset = ""; return@LaunchedEffect }
         delay(450)
@@ -191,11 +195,13 @@ fun ChatsScreen(
             }
             when {
                 selectedNav == "Search" && q.isNotBlank() -> GlobalResults(global, globalLoading, globalOffset, {
-                    globalLoading = true
-                    val (more, next) = runCatching { Tg.searchGlobal(q.trim(), globalOffset) }.getOrDefault(emptyList<Media>() to "")
-                    global = global + more
-                    globalOffset = next
-                    globalLoading = false
+                    scope.launch {
+                        globalLoading = true
+                        val (more, next) = runCatching { Tg.searchGlobal(q.trim(), globalOffset) }.getOrDefault(emptyList<Media>() to "")
+                        global = global + more
+                        globalOffset = next
+                        globalLoading = false
+                    }
                 }, onOpenMedia)
                 shown.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(if (lists.values.all { it.isEmpty() }) "Loading your chats…" else "No chats match", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -247,7 +253,7 @@ fun ChatsScreen(
     }
 }
 
-private fun Modifier.width150(): Modifier = this.then(androidx.compose.foundation.layout.width(150.dp))
+private fun Modifier.width150(): Modifier = this.width(150.dp)
 
 @Composable
 private fun GlobalResults(

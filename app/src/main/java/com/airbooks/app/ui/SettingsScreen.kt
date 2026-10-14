@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.airbooks.app.BuildConfig
 import com.airbooks.app.Prefs
 import com.airbooks.app.stream.StreamingMode

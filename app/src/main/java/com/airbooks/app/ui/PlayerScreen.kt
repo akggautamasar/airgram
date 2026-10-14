@@ -474,7 +474,9 @@ private fun android.app.Activity.enterPip() {
     if (Build.VERSION.SDK_INT >= 26) {
         runCatching {
             enterPictureInPictureMode(
-                android.app.PictureInPictureParams.Builder(android.util.Rational(16, 9)).build(),
+                android.app.PictureInPictureParams.Builder()
+                    .setAspectRatio(android.util.Rational(16, 9))
+                    .build(),
             )
         }
     }

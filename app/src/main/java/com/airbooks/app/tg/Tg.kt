@@ -181,7 +181,7 @@ object Tg {
                 }
             }
             is TdApi.UpdateChatReadInbox -> {
-                chatMap[o.chatId]?.let { it.unread_count = o.unread_count }
+                chatMap[o.chatId]?.let { it.unreadCount = o.unreadCount }
                 dirty.trySend(Unit)
             }
             is TdApi.UpdateFile -> {
@@ -208,7 +208,7 @@ object Tg {
                 val key = listKey(pos.list) ?: continue
                 seen(c.photo?.small)
                 byList.getOrPut(key) { mutableListOf() }
-                    .add(ChatRow(c.id, if (self) "Saved Messages" else c.title, sub, c.photo?.small?.id ?: 0, pos.order, c.unread_count))
+                    .add(ChatRow(c.id, if (self) "Saved Messages" else c.title, sub, c.photo?.small?.id ?: 0, pos.order, c.unreadCount))
             }
         }
         byList.values.forEach { list -> list.sortByDescending { it.order } }
@@ -219,14 +219,14 @@ object Tg {
     private fun listKey(l: TdApi.ChatList): String? = when (l) {
         is TdApi.ChatListMain -> "main"
         is TdApi.ChatListArchive -> "archive"
-        is TdApi.ChatListFolder -> "folder:${l.chat_folder_id}"
+        is TdApi.ChatListFolder -> "folder:${l.chatFolderId}"
         else -> null
     }
 
     private fun sameList(a: TdApi.ChatList, b: TdApi.ChatList): Boolean = when {
         a is TdApi.ChatListMain && b is TdApi.ChatListMain -> true
         a is TdApi.ChatListArchive && b is TdApi.ChatListArchive -> true
-        a is TdApi.ChatListFolder && b is TdApi.ChatListFolder -> a.chat_folder_id == b.chat_folder_id
+        a is TdApi.ChatListFolder && b is TdApi.ChatListFolder -> a.chatFolderId == b.chatFolderId
         else -> false
     }
 
@@ -262,7 +262,7 @@ object Tg {
     }
 
     suspend fun folderName(id: Int): String = runCatching {
-        send(TdApi.GetChatFolder(id)).name.name
+        send(TdApi.GetChatFolder(id)).name.text.text
     }.getOrDefault("Folder $id")
 
     // ───────────────────────────── global search & stats ─────────────────────────────
@@ -270,12 +270,12 @@ object Tg {
     /** Cross-chat message search (media messages become openable rows). */
     suspend fun searchGlobal(query: String, offset: String): Pair<List<Media>, String> {
         val req = TdApi.SearchMessages()
-        req.chat_list = null
+        req.chatList = null
         req.query = query
         req.offset = offset
         req.limit = 40
         val r = send(req)
-        return r.messages.mapNotNull { toMedia(it) } to (r.next_offset ?: "")
+        return r.messages.mapNotNull { toMedia(it) } to (r.nextOffset ?: "")
     }
 
     /** Aggregated TDLib network statistics: label → (rx bytes, tx bytes). */
@@ -284,14 +284,14 @@ object Tg {
         val acc = LinkedHashMap<String, LongArray>()
         for (e in r.entries) {
             if (e !is TdApi.NetworkStatisticsEntryFile) continue
-            val label = when (e.network_type) {
+            val label = when (e.networkType) {
                 is TdApi.NetworkTypeWiFi -> "Wi-Fi"
                 is TdApi.NetworkTypeMobile, is TdApi.NetworkTypeMobileRoaming -> "Mobile data"
                 else -> "Other"
             }
             val a = acc.getOrPut(label) { LongArray(2) }
-            a[0] += e.rx_bytes
-            a[1] += e.tx_bytes
+            a[0] += e.receivedBytes
+            a[1] += e.sentBytes
         }
         return acc.map { Triple(it.key, it.value[0], it.value[1]) }
     }
