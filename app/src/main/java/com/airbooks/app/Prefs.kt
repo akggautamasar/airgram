@@ -78,16 +78,16 @@ object Prefs {
         sp.edit().putString("lastStreamMode", m.name).apply()
     }
 
-    fun setRememberLastMode(v: Boolean) {
+    fun updateRememberLastMode(v: Boolean) {
         rememberLastMode = v
         sp.edit().putBoolean("rememberLastMode", v).apply()
         if (!v) lastMode = streamingMode
     }
 
-    fun setWifiOnlyPrefetch(v: Boolean) { wifiOnlyPrefetch = v; sp.edit().putBoolean("wifiOnlyPrefetch", v).apply() }
-    fun setMobileDataWarning(v: Boolean) { mobileDataWarning = v; sp.edit().putBoolean("mobileDataWarning", v).apply() }
-    fun setSuspendThumbsLowData(v: Boolean) { suspendThumbsLowData = v; sp.edit().putBoolean("suspendThumbsLowData", v).apply() }
-    fun setMaxCacheMb(v: Int) { maxCacheMb = v; sp.edit().putInt("maxCacheMb", v).apply() }
+    fun updateWifiOnlyPrefetch(v: Boolean) { wifiOnlyPrefetch = v; sp.edit().putBoolean("wifiOnlyPrefetch", v).apply() }
+    fun updateMobileDataWarning(v: Boolean) { mobileDataWarning = v; sp.edit().putBoolean("mobileDataWarning", v).apply() }
+    fun updateSuspendThumbsLowData(v: Boolean) { suspendThumbsLowData = v; sp.edit().putBoolean("suspendThumbsLowData", v).apply() }
+    fun updateMaxCacheMb(v: Int) { maxCacheMb = v; sp.edit().putInt("maxCacheMb", v).apply() }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
         sp.edit().putInt("prefetchMb", mb).apply()

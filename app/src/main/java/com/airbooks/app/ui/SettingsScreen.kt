@@ -96,7 +96,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     dialog = "Default video mode"
                 }
                 SwitchRow("Remember last-used mode", "Start the player in the mode you last picked there", Prefs.rememberLastMode) {
-                    Prefs.setRememberLastMode(it)
+                    Prefs.updateRememberLastMode(it)
                 }
                 SettingRow(Icons.Filled.PlayArrow, "Playback speed", "${Prefs.playbackSpeed}×") { dialog = "Playback Speed" }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -109,13 +109,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Slider(value = Prefs.prefetchMb.toFloat(), onValueChange = { Prefs.setPrefetch(it.toInt()) }, valueRange = 4f..64f, steps = 14)
                 }
                 SwitchRow("Wi-Fi-only prefetch", "No thumbnail/preview prefetching on mobile data (playback itself still streams)", Prefs.wifiOnlyPrefetch) {
-                    Prefs.setWifiOnlyPrefetch(it)
+                    Prefs.updateWifiOnlyPrefetch(it)
                 }
                 SwitchRow("Mobile-data warning", "Warn in the player when streaming on mobile data", Prefs.mobileDataWarning) {
-                    Prefs.setMobileDataWarning(it)
+                    Prefs.updateMobileDataWarning(it)
                 }
                 SwitchRow("Suspend thumbnails in Low Data", "While Low Data playback is active, stop thumbnail/preview work", Prefs.suspendThumbsLowData) {
-                    Prefs.setSuspendThumbsLowData(it)
+                    Prefs.updateSuspendThumbsLowData(it)
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Text("Maximum temporary cache", style = MaterialTheme.typography.titleMedium)
@@ -124,7 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Slider(value = Prefs.maxCacheMb.toFloat(), onValueChange = { Prefs.setMaxCacheMb(it.toInt()) }, valueRange = 128f..4096f, steps = 30)
+                    Slider(value = Prefs.maxCacheMb.toFloat(), onValueChange = { Prefs.updateMaxCacheMb(it.toInt()) }, valueRange = 128f..4096f, steps = 30)
                 }
                 SettingRow(Icons.Filled.Delete, "Clear temporary streaming cache", "Files Telegram re-downloads on demand; login/chats stay") {
                     clearTempCache()
