@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.airbooks.app.AirBooksApp
+import com.airbooks.app.BuildConfig
 import java.io.File
 
 /** The trace written by [AirBooksApp]'s uncaught-exception handler, if the last run crashed. */
@@ -44,7 +45,10 @@ fun CrashReportDialog() {
         text = {
             SelectionContainer {
                 Text(
-                    report.take(6000),
+                    // Distinguish a stored report written by an older build ("AirGram 1.0 crash
+                    // at …") from the build currently installed, so stale traces are obvious.
+                    "Installed now: AirGram ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n\n" +
+                        report.take(6000),
                     fontSize = 10.sp,
                     lineHeight = 13.sp,
                     modifier = Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState()),

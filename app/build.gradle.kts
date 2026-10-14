@@ -20,8 +20,8 @@ android {
         applicationId = "com.airbooks.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         buildConfigField("int", "TG_API_ID", secret("TG_API_ID").ifBlank { "0" })
         buildConfigField("String", "TG_API_HASH", "\"${secret("TG_API_HASH")}\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
