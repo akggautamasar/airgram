@@ -2,6 +2,8 @@ package com.airbooks.app.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -41,9 +45,11 @@ fun ImageScreen(items: List<Media>, start: Media, onBack: () -> Unit) {
     val pager = rememberPagerState(initialPage = startIdx) { items.size }
     var hd by remember { mutableStateOf(false) }
 
+    var anyZoom by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { i ->
-            ImagePage(items[i], hd, active = pager.currentPage == i)
+        // While a page is zoomed, swipes pan the picture instead of flipping pages.
+        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), userScrollEnabled = !anyZoom) { i ->
+            ImagePage(items[i], hd, active = pager.currentPage == i, onZoom = { anyZoom = it })
         }
         Row(
             Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp),
@@ -61,17 +67,42 @@ fun ImageScreen(items: List<Media>, start: Media, onBack: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ImagePage(m: Media, hd: Boolean, active: Boolean) {
+private fun ImagePage(m: Media, hd: Boolean, active: Boolean, onZoom: (Boolean) -> Unit) {
     val id = if (hd) m.hdFileId else m.fileId
     var progress by remember(id) { mutableFloatStateOf(0f) }
     val path by produceState<String?>(Tg.completedPath(id), id, active) {
         if (active) value = Tg.awaitDownload(id, 16) { progress = it }
     }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(0f to 0f) }
+    androidx.compose.runtime.SideEffect { onZoom(!ZoomMath.isFitted(scale)) }
+    val zoomable = Modifier
+        .graphicsLayer { scaleX = scale; scaleY = scale; translationX = pan.first; translationY = pan.second }
+        .pointerInput(id) {
+            detectTransformGestures { _, panChange, zoomChange, _ ->
+                val ns = ZoomMath.clampScale(scale * zoomChange)
+                scale = ns
+                pan = ZoomMath.clampPan(ns, pan.first + panChange.x, pan.second + panChange.y, size.width.toFloat(), size.height.toFloat())
+                onZoom(!ZoomMath.isFitted(ns))
+            }
+        }
+        .pointerInput(id) {
+            detectTapGestures(onDoubleTap = { tp ->
+                val ns = ZoomMath.doubleTapScale(scale)
+                scale = ns
+                pan = if (ZoomMath.isFitted(ns)) 0f to 0f else ZoomMath.clampPan(
+                    ns, size.width / 2f - tp.x, size.height / 2f - tp.y,
+                    size.width.toFloat(), size.height.toFloat(),
+                )
+                onZoom(!ZoomMath.isFitted(ns))
+            })
+        }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         // Tiny inline preview and the grid thumbnail are shown first, so something appears immediately.
-        TgImage(m.thumbId, m.mini, Modifier.fillMaxSize(), scale = ContentScale.Fit)
-        path?.let { AsyncImage(File(it), m.caption, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
+        TgImage(m.thumbId, m.mini, Modifier.fillMaxSize().then(zoomable), scale = ContentScale.Fit)
+        path?.let { AsyncImage(File(it), m.caption, Modifier.fillMaxSize().then(zoomable), contentScale = ContentScale.Fit) }
         if (path == null && active) {
             LinearProgressIndicator(
                 progress = { progress },

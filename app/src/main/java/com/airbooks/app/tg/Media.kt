@@ -17,6 +17,7 @@ data class ChatRow(
     val subtitle: String,
     val photoId: Int,
     val order: Long,
+    val unread: Int = 0,
 )
 
 data class Media(

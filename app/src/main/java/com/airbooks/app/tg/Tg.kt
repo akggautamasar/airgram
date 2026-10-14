@@ -39,6 +39,8 @@ object Tg {
     val authState = MutableStateFlow<TdApi.AuthorizationState?>(null)
     val connection = MutableStateFlow("")
     val chats = MutableStateFlow<List<ChatRow>>(emptyList())
+    /** Chats grouped by list: "main", "archive", "folder:<id>" — powers folders & archive UI. */
+    val chatsByList = MutableStateFlow<Map<String, List<ChatRow>>>(emptyMap())
 
     private var meId = 0L
     private val chatMap = ConcurrentHashMap<Long, TdApi.Chat>()
@@ -171,12 +173,16 @@ object Tg {
             }
             is TdApi.UpdateChatPosition -> {
                 val c = chatMap[o.chatId]
-                if (c != null && o.position.list is TdApi.ChatListMain) {
-                    val rest = c.positions.filter { it.list !is TdApi.ChatListMain }.toMutableList()
+                if (c != null) {
+                    val rest = c.positions.filter { p -> !sameList(p.list, o.position.list) }.toMutableList()
                     if (o.position.order != 0L) rest.add(o.position)
                     c.positions = rest.toTypedArray()
                     dirty.trySend(Unit)
                 }
+            }
+            is TdApi.UpdateChatReadInbox -> {
+                chatMap[o.chatId]?.let { it.unread_count = o.unread_count }
+                dirty.trySend(Unit)
             }
             is TdApi.UpdateFile -> {
                 fileMap[o.file.id] = o.file
@@ -187,10 +193,8 @@ object Tg {
     }
 
     private fun publishChats() {
-        val rows = chatMap.values.mapNotNull { c ->
-            val pos = c.positions.firstOrNull { it.list is TdApi.ChatListMain } ?: return@mapNotNull null
-            if (pos.order == 0L) return@mapNotNull null
-            seen(c.photo?.small)
+        val byList = HashMap<String, MutableList<ChatRow>>()
+        for (c in chatMap.values) {
             val t = c.type
             val self = t is TdApi.ChatTypePrivate && t.userId == meId
             val sub = when (t) {
@@ -199,12 +203,98 @@ object Tg {
                 is TdApi.ChatTypeSupergroup -> if (t.isChannel) "Channel" else "Group"
                 else -> ""
             }
-            ChatRow(c.id, if (self) "Saved Messages" else c.title, sub, c.photo?.small?.id ?: 0, pos.order)
-        }.sortedByDescending { it.order }
-        chats.value = rows
+            for (pos in c.positions) {
+                if (pos.order == 0L) continue
+                val key = listKey(pos.list) ?: continue
+                seen(c.photo?.small)
+                byList.getOrPut(key) { mutableListOf() }
+                    .add(ChatRow(c.id, if (self) "Saved Messages" else c.title, sub, c.photo?.small?.id ?: 0, pos.order, c.unread_count))
+            }
+        }
+        byList.values.forEach { list -> list.sortByDescending { it.order } }
+        chatsByList.value = byList
+        chats.value = byList["main"] ?: emptyList()
     }
 
-    // ───────────────────────────── files: metadata ─────────────────────────────
+    private fun listKey(l: TdApi.ChatList): String? = when (l) {
+        is TdApi.ChatListMain -> "main"
+        is TdApi.ChatListArchive -> "archive"
+        is TdApi.ChatListFolder -> "folder:${l.chat_folder_id}"
+        else -> null
+    }
+
+    private fun sameList(a: TdApi.ChatList, b: TdApi.ChatList): Boolean = when {
+        a is TdApi.ChatListMain && b is TdApi.ChatListMain -> true
+        a is TdApi.ChatListArchive && b is TdApi.ChatListArchive -> true
+        a is TdApi.ChatListFolder && b is TdApi.ChatListFolder -> a.chat_folder_id == b.chat_folder_id
+        else -> false
+    }
+
+    // ───────────────────────────── lists: archive & folders ─────────────────────────────
+
+    private val loadedLists = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun listLabel(key: String): String = when {
+        key == "main" -> "Chats"
+        key == "archive" -> "Archive"
+        else -> key.removePrefix("folder:")
+    }
+
+    /** Lazily page a non-main list (archive / folder) until TDLib reports it exhausted. */
+    suspend fun ensureList(key: String) {
+        if (key == "main" || !loadedLists.add(key)) return
+        val list: TdApi.ChatList = when {
+            key == "archive" -> TdApi.ChatListArchive()
+            key.startsWith("folder:") ->
+                TdApi.ChatListFolder(key.removePrefix("folder:").toIntOrNull() ?: return)
+            else -> return
+        }
+        var fails = 0
+        while (fails < 3) {
+            try {
+                send(TdApi.LoadChats(list, 100))
+            } catch (e: TdException) {
+                if (e.code == 404) break
+                fails++
+                kotlinx.coroutines.delay(1500)
+            }
+        }
+    }
+
+    suspend fun folderName(id: Int): String = runCatching {
+        send(TdApi.GetChatFolder(id)).name.name
+    }.getOrDefault("Folder $id")
+
+    // ───────────────────────────── global search & stats ─────────────────────────────
+
+    /** Cross-chat message search (media messages become openable rows). */
+    suspend fun searchGlobal(query: String, offset: String): Pair<List<Media>, String> {
+        val req = TdApi.SearchMessages()
+        req.chat_list = null
+        req.query = query
+        req.offset = offset
+        req.limit = 40
+        val r = send(req)
+        return r.messages.mapNotNull { toMedia(it) } to (r.next_offset ?: "")
+    }
+
+    /** Aggregated TDLib network statistics: label → (rx bytes, tx bytes). */
+    suspend fun networkStats(): List<Triple<String, Long, Long>> {
+        val r = send(TdApi.GetNetworkStatistics(false))
+        val acc = LinkedHashMap<String, LongArray>()
+        for (e in r.entries) {
+            if (e !is TdApi.NetworkStatisticsEntryFile) continue
+            val label = when (e.network_type) {
+                is TdApi.NetworkTypeWiFi -> "Wi-Fi"
+                is TdApi.NetworkTypeMobile, is TdApi.NetworkTypeMobileRoaming -> "Mobile data"
+                else -> "Other"
+            }
+            val a = acc.getOrPut(label) { LongArray(2) }
+            a[0] += e.rx_bytes
+            a[1] += e.tx_bytes
+        }
+        return acc.map { Triple(it.key, it.value[0], it.value[1]) }
+    }
 
     private fun seen(f: TdApi.File?): Int {
         if (f == null) return 0

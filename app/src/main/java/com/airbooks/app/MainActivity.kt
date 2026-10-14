@@ -98,12 +98,21 @@ fun MainNav() {
     fun push(s: Screen) { stack.add(s) }
     fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
     BackHandler(enabled = stack.size > 1) { pop() }
+    fun openMedia(m: Media, all: List<Media>) {
+        when (m.kind) {
+            Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m, all, ""))
+            Kind.PDF -> push(Screen.Pdf(m))
+            Kind.IMAGE -> push(Screen.Image(all.filter { it.kind == Kind.IMAGE }, m))
+            Kind.OTHER -> push(Screen.Other(m))
+        }
+    }
 
     when (val s = stack.last()) {
         Screen.Chats -> ChatsScreen(
             onOpen = { push(Screen.Files(it.id, it.title)) },
             onSettings = { push(Screen.Settings) },
             onDownloads = { push(Screen.Downloads) },
+            onOpenMedia = { m -> openMedia(m, listOf(m)) },
         )
         Screen.Settings -> SettingsScreen(onBack = { pop() })
         Screen.Downloads -> DownloadsScreen(onBack = { pop() })
@@ -112,14 +121,7 @@ fun MainNav() {
             title = s.title,
             onBack = { pop() },
             onDownload = { m -> DownloadManager.enqueue(m) },
-            onOpen = { m, all ->
-                when (m.kind) {
-                    Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m, all, s.title))
-                    Kind.PDF -> push(Screen.Pdf(m))
-                    Kind.IMAGE -> push(Screen.Image(all.filter { it.kind == Kind.IMAGE }, m))
-                    Kind.OTHER -> push(Screen.Other(m))
-                }
-            },
+            onOpen = { m, all -> openMedia(m, all) },
         )
         is Screen.Play -> PlayerScreen(s.item, s.queue, s.chatTitle, onBack = { pop() })
         is Screen.Pdf -> PdfScreen(s.item, onBack = { pop() })

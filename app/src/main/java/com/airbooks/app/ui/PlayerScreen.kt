@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +63,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.PlayerView
 import com.airbooks.app.Prefs
+import com.airbooks.app.home.Recent
 import com.airbooks.app.playback.PlaybackService
 import com.airbooks.app.stream.StreamingMode
 import com.airbooks.app.stream.StreamingRuntime
@@ -122,6 +124,7 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
     var controlsVisible by remember { mutableStateOf(true) }
     var landscape by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
+    var sleepMenu by remember { mutableStateOf(false) }
     var trackMenu by remember { mutableStateOf(false) }
     var trackLabels by remember { mutableStateOf<List<TrackEntry>>(emptyList()) }
     var warnDismissed by remember { mutableStateOf(false) }
@@ -233,10 +236,31 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
 
     LaunchedEffect(controller) {
         val c = controller ?: return@LaunchedEffect
+        var tick = 0
         while (true) {
             aheadMs = (c.bufferedPosition - c.currentPosition).coerceAtLeast(0)
             savePosition(c)
+            // Feed the Continue rail every 5 s without hammering SharedPreferences.
+            if (++tick % 5 == 0 && c.currentPosition > 0) {
+                Prefs.updateRecentMedia(
+                    Recent.encode(
+                        Recent.note(
+                            Recent.decode(Prefs.recentMedia),
+                            Recent.Entry(item.chatId, item.msgId, item.fileId, item.kind, item.name, item.size, c.currentPosition, System.currentTimeMillis()),
+                        ),
+                    ),
+                )
+            }
             delay(1000)
+        }
+    }
+
+    // Sleep timer: pause playback after the chosen delay (audio bedside use).
+    var sleepMin by remember { mutableIntStateOf(0) }
+    LaunchedEffect(sleepMin) {
+        if (sleepMin > 0) {
+            delay(sleepMin * 60_000L)
+            controller?.pause()
         }
     }
 
@@ -327,6 +351,15 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                                 ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                             }
                         }) { Text("Rotate", color = Color.White) }
+                        TextButton(onClick = { activity?.enterPip() }) { Text("PiP", color = Color.White) }
+                    }
+                    Box {
+                        TextButton(onClick = { sleepMenu = true }) { Text(if (sleepMin > 0) "Sleep ${sleepMin}m" else "Sleep", color = Color.White) }
+                        DropdownMenu(expanded = sleepMenu, onDismissRequest = { sleepMenu = false }) {
+                            listOf(0 to "Off", 15 to "15 min", 30 to "30 min", 60 to "1 hour").forEach { (m, label) ->
+                                DropdownMenuItem(text = { Text(label) }, onClick = { sleepMin = m; sleepMenu = false })
+                            }
+                        }
                     }
                     Box {
                         TextButton(onClick = { speedMenu = true }) { Text("${Prefs.playbackSpeed}×", color = Color.White) }
@@ -435,3 +468,14 @@ private data class TrackEntry(
     val label: String,
     val selected: Boolean,
 )
+
+/** Picture-in-picture for video (Android 8+); no-op elsewhere. Playback keeps running. */
+private fun android.app.Activity.enterPip() {
+    if (Build.VERSION.SDK_INT >= 26) {
+        runCatching {
+            enterPictureInPictureMode(
+                android.app.PictureInPictureParams.Builder(android.util.Rational(16, 9)).build(),
+            )
+        }
+    }
+}

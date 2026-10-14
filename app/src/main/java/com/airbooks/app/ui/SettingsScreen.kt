@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import com.airbooks.app.bench.Bench
+import com.airbooks.app.bench.Trial
 import com.airbooks.app.download.DownloadManager
 import com.airbooks.app.download.DownloadScheduler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -68,6 +70,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var confirmLogout by remember { mutableStateOf(false) }
     var clearedMsg by remember { mutableStateOf<String?>(null) }
     val connection by Tg.connection.collectAsState()
+    var netStats by remember { mutableStateOf<List<Triple<String, Long, Long>>>(emptyList()) }
+    LaunchedEffect(dialog) {
+        if (dialog == "Data Usage") netStats = runCatching { Tg.networkStats() }.getOrDefault(emptyList())
+    }
 
     LaunchedEffect(refresh) {
         cacheBytes = withContext(Dispatchers.IO) { Tg.cacheBytes() }
@@ -161,6 +167,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 SwitchRow("Wi-Fi-only downloads", "The queue parks instead of using mobile data", Prefs.wifiOnlyDownloads) {
                     DownloadManager.setWifiOnly(it)
                 }
+                SettingRow(Icons.Filled.Download, "Data usage", "TDLib network statistics + benchmark medians") {
+                    dialog = "Data Usage"
+                }
             }
 
             // ── App preferences ──────────────────────────────────────────────────
@@ -247,6 +256,30 @@ fun SettingsScreen(onBack: () -> Unit) {
                 confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
             )
         }
+        "Data Usage" -> AlertDialog(
+            onDismissRequest = { dialog = "" },
+            title = { Text("Data usage") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (netStats.isEmpty()) Text("No statistics yet.")
+                    netStats.forEach { (label, rx, tx) ->
+                        Text("$label:  ↓ ${fmtSize(rx)}  ·  ↑ ${fmtSize(tx)}", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    val trials = Bench.all()
+                    if (trials.isNotEmpty()) {
+                        Text("Benchmark medians (sustained):", style = MaterialTheme.typography.titleSmall)
+                        trials.groupBy { it.scenario }.forEach { (sc, ts) ->
+                            Text(
+                                "$sc: %.2f MB/s median over ${ts.size} trial(s), %.0f s median completion"
+                                    .format(Trial.median(ts.map { it.sustainedMBps }), Trial.median(ts.map { it.completionMs.toDouble() }) / 1000),
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } },
+        )
         "Storage Usage" -> AlertDialog(
             onDismissRequest = { dialog = "" },
             title = { Text("Storage usage") },

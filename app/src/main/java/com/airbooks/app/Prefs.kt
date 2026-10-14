@@ -47,6 +47,9 @@ object Prefs {
         private set
     var wifiOnlyDownloads by mutableStateOf(false)
         private set
+    /** TSV blob backing the Continue-watching rail (home/Recent.kt). */
+    var recentMedia by mutableStateOf("")
+        private set
 
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("airbooks", Context.MODE_PRIVATE)
@@ -65,6 +68,7 @@ object Prefs {
         maxCacheMb = sp.getInt("maxCacheMb", 512)
         downloadProfile = sp.getString("downloadProfile", "Balanced") ?: "Balanced"
         wifiOnlyDownloads = sp.getBoolean("wifiOnlyDownloads", false)
+        recentMedia = sp.getString("recentMedia", "") ?: ""
     }
 
     private fun modeOf(v: String?): StreamingMode =
@@ -97,6 +101,7 @@ object Prefs {
     fun updateMaxCacheMb(v: Int) { maxCacheMb = v; sp.edit().putInt("maxCacheMb", v).apply() }
     fun updateDownloadProfile(v: String) { downloadProfile = v; sp.edit().putString("downloadProfile", v).apply() }
     fun updateWifiOnlyDownloads(v: Boolean) { wifiOnlyDownloads = v; sp.edit().putBoolean("wifiOnlyDownloads", v).apply() }
+    fun updateRecentMedia(v: String) { recentMedia = v; sp.edit().putString("recentMedia", v).apply() }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
         sp.edit().putInt("prefetchMb", mb).apply()
