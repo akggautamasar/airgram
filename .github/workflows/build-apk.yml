@@ -10,6 +10,10 @@ on:
   push:
     branches: [main, 'arena/**']
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -83,7 +87,18 @@ jobs:
           fi
 
       - name: Run unit tests
-        run: gradle :app:testReleaseUnitTest --no-daemon --stacktrace
+        run: |
+          set +e
+          gradle :app:testReleaseUnitTest --no-daemon 2>&1 | tail -n 120 > "$RUNNER_TEMP/test-tail.txt"
+          code=${PIPESTATUS[0]}
+          cat "$RUNNER_TEMP/test-tail.txt"
+          if [ "$code" != "0" ]; then
+            { echo "Unit tests failed on ${GITHUB_SHA}:"; echo; echo '```'; cat "$RUNNER_TEMP/test-tail.txt"; echo '```'; } > "$RUNNER_TEMP/issue.md"
+            gh issue create --title "CI: unit tests failed (${GITHUB_SHA::7})" --body-file "$RUNNER_TEMP/issue.md" || true
+            exit "$code"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Assemble release APK
         env:
