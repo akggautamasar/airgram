@@ -90,7 +90,30 @@ not randomly addressable.
   No transcoding, no VLC (per requirements).
 - Background playback keeps audio after leaving the player; stop it from the notification.
 
-## 4. Tests
+## 4. Crash hardening and on-device diagnostics
+
+A hard crash while opening a video traced to two failure classes that Media3 does not contain:
+
+- `DataSource.open/read` run on ExoPlayer's loader thread, where Media3 converts only
+  `IOException` into a retryable `PlaybackException`; any other `Throwable` (e.g. a TDLib
+  `TdException` from `GetFile`/`DownloadFile`, or an unexpected runtime failure) escapes as an
+  uncaught exception and kills the whole process. `TdDataSource` now routes `open`/`read`
+  through a `guard {}` that records the failure in `StreamingRuntime.lastError` and rethrows
+  non-IO failures as `IOException`, so the player shows its error + Retry UI instead of dying.
+  `close()` swallows teardown failures for the same reason.
+- `DefaultLoadControl` with only duration caps can reserve unbounded heap while the media
+  bitrate is unknown (Telegram reports none before extraction), which can OOM-kill the process
+  while buffering a large high-bitrate file. The service now sets an explicit 48 MB
+  `setTargetBufferBytes` ceiling and falls back to sane buffer durations if the policy input
+  ever fails, so `onCreate` cannot take the service (and process) down.
+
+Because Samsung/Android surfaces process death only as "this app has a bug", the app also
+installs a `Thread.setDefaultUncaughtExceptionHandler` that writes the full stack trace to
+`cacheDir/last_crash.txt`; on the next launch a dialog shows the trace (selectable, so it can be
+screenshotted) with Dismiss/Keep. Any future crash is therefore diagnosable from a screenshot,
+without logcat or a backend.
+
+## 5. Tests
 
 Automated (run in CI on every push, `:app:testReleaseUnitTest`, all passing):
 `StreamingPolicyTest` covers estimator convergence/clamping, range de-duplication and

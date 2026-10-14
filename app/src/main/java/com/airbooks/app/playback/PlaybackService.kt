@@ -35,29 +35,36 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         val mode = Prefs.effectiveMode()
         StreamingRuntime.activeMode = mode
-        val decision = PlaybackPolicy().decide(
-            PolicyInput(
-                throughputBps = StreamingRuntime.estimator.ewmaBps,
-                avgLatencyMs = 0L,
-                mediaBitrateBps = 0,
-                bufferedMs = 0L,
-                rebufferCount = 0,
-                positionMs = 0L,
-                mode = mode,
-                hasLowerQualityVariant = false,
-                maxWindowBytes = Prefs.prefetchMb * 1024L * 1024L,
+        // Buffer durations come from the streaming policy; if anything is ever misconfigured the
+        // service must still come up with sane defaults instead of crashing on onCreate.
+        val decision = runCatching {
+            PlaybackPolicy().decide(
+                PolicyInput(
+                    throughputBps = StreamingRuntime.estimator.ewmaBps,
+                    avgLatencyMs = 0L,
+                    mediaBitrateBps = 0,
+                    bufferedMs = 0L,
+                    rebufferCount = 0,
+                    positionMs = 0L,
+                    mode = mode,
+                    hasLowerQualityVariant = false,
+                    maxWindowBytes = Prefs.prefetchMb * 1024L * 1024L,
+                )
             )
-        )
+        }.getOrNull()
+        val minBufferMs = decision?.minBufferMs?.toInt() ?: 15_000
+        val maxBufferMs = decision?.maxBufferMs?.toInt() ?: 60_000
+        val startMs = decision?.bufferForPlaybackMs?.toInt() ?: 2_500
+        val rebufferMs = decision?.bufferForPlaybackAfterRebufferMs?.toInt() ?: 5_000
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(TdDataSourceFactory()))
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(
-                        decision.minBufferMs.toInt(),
-                        decision.maxBufferMs.toInt(),
-                        decision.bufferForPlaybackMs.toInt(),
-                        decision.bufferForPlaybackAfterRebufferMs.toInt(),
-                    )
+                    .setBufferDurationsMs(minBufferMs, maxBufferMs, startMs, rebufferMs)
+                    // Telegram exposes no bitrate up front, so without a byte target the
+                    // duration-based cap alone can reserve hundreds of MB of heap on a
+                    // high-bitrate file and OOM-kill the process mid-buffer.
+                    .setTargetBufferBytes(TARGET_BUFFER_BYTES)
                     .build()
             )
             .setAudioAttributes(
@@ -91,5 +98,10 @@ class PlaybackService : MediaSessionService() {
         session = null
         StreamingRuntime.playbackActive = false
         super.onDestroy()
+    }
+
+    private companion object {
+        /** Hard heap ceiling for buffered samples, regardless of durations or (unknown) bitrate. */
+        const val TARGET_BUFFER_BYTES = 48 * 1024 * 1024
     }
 }

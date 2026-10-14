@@ -67,7 +67,9 @@ class TdDataSource(
     private var raf: RandomAccessFile? = null
     private var rafPath: String? = null
 
-    override fun open(dataSpec: DataSpec): Long {
+    override fun open(dataSpec: DataSpec): Long = guard { openInner(dataSpec) }
+
+    private fun openInner(dataSpec: DataSpec): Long {
         uri = dataSpec.uri
         fileId = dataSpec.uri.lastPathSegment?.toIntOrNull()
             ?: throw IOException("Bad tg:// uri")
@@ -105,7 +107,10 @@ class TdDataSource(
         return remaining
     }
 
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        guard { readInner(buffer, offset, length) }
+
+    private fun readInner(buffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         if (remaining == 0L) return C.RESULT_END_OF_INPUT
         if (closed) throw InterruptedIOException("Streaming closed")
@@ -131,22 +136,50 @@ class TdDataSource(
 
     override fun close() {
         closed = true
-        synchronized(readLock) {
-            try {
-                raf?.close()
-            } catch (_: IOException) {
+        // Never let teardown kill the process: ExoPlayer calls close() from release/error paths,
+        // and an exception thrown from here would escape as an uncaught crash.
+        try {
+            synchronized(readLock) {
+                try {
+                    raf?.close()
+                } catch (_: IOException) {
+                }
+                raf = null
+                rafPath = null
             }
-            raf = null
-            rafPath = null
-        }
-        uri = null
-        if (opened) {
-            opened = false
-            // Stops the TDLib download only when no other reader still needs this file.
-            Tg.endStream(fileId)
-            transferEnded()
+            uri = null
+            if (opened) {
+                opened = false
+                // Stops the TDLib download only when no other reader still needs this file.
+                Tg.endStream(fileId)
+                transferEnded()
+            }
+        } catch (e: Exception) {
+            StreamingRuntime.lastError = "close: ${e::class.java.simpleName}: ${e.message}"
         }
     }
+
+    /**
+     * Media3 only converts [IOException] from a DataSource into a retryable playback error; any
+     * other Throwable escapes onto the loader thread as an uncaught exception and kills the
+     * process. TDLib calls (GetFile/DownloadFile) can surface [TdException] and friends, so every
+     * non-IO failure is recorded for diagnostics and rethrown as IOException instead.
+     */
+    private inline fun <T> guard(block: () -> T): T =
+        try {
+            block()
+        } catch (e: IOException) {
+            StreamingRuntime.lastError = e.message
+            throw e
+        } catch (e: VirtualMachineError) {
+            // OOM/StackOverflow: record, but do not mask — the process is going down anyway and
+            // the crash handler writes the real trace.
+            StreamingRuntime.lastError = "${e::class.java.simpleName}: ${e.message}"
+            throw e
+        } catch (e: Throwable) {
+            StreamingRuntime.lastError = "${e::class.java.simpleName}: ${e.message}"
+            throw IOException("Streaming failed: ${e::class.java.simpleName}: ${e.message}", e)
+        }
 
     /** Request the policy-sized window around the read position, de-duplicated by [ranges]. */
     private fun ensureWindow() {

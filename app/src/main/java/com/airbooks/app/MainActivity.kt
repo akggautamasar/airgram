@@ -27,6 +27,7 @@ import com.airbooks.app.tg.Media
 import com.airbooks.app.tg.Tg
 import com.airbooks.app.ui.AirTheme
 import com.airbooks.app.ui.ChatsScreen
+import com.airbooks.app.ui.CrashReportDialog
 import com.airbooks.app.ui.FilesScreen
 import com.airbooks.app.ui.ImageScreen
 import com.airbooks.app.ui.LoginScreen
@@ -60,6 +61,7 @@ sealed interface Screen {
 
 @Composable
 fun Root() {
+    CrashReportDialog()
     if (BuildConfig.TG_API_ID == 0 || BuildConfig.TG_API_HASH.isBlank()) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
