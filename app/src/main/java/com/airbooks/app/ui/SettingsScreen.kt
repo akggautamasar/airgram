@@ -161,10 +161,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                         Card(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 when (dialog) {
-                                    "Default Player Engine" -> Prefs.setPlayerEngine(choice)
-                                    "Default Video Decoder" -> Prefs.setVideoDecoder(choice)
+                                    "Default Player Engine" -> Prefs.updatePlayerEngine(choice)
+                                    "Default Video Decoder" -> Prefs.updateVideoDecoder(choice)
                                     "App Theme" -> Prefs.setTheme(choice)
-                                    "Playback Speed" -> Prefs.setPlaybackSpeed(choice.toFloatOrNull() ?: 1f)
+                                    "Playback Speed" -> Prefs.updatePlaybackSpeed(choice.toFloatOrNull() ?: 1f)
                                 }
                                 dialog = ""
                             },
