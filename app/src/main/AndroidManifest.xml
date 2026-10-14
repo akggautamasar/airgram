@@ -8,7 +8,7 @@
         android:name=".AirBooksApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="AirBooks"
+        android:label="AirGram"
         android:supportsRtl="true"
         android:theme="@style/Theme.AirBooks"
         android:usesCleartextTraffic="false">
