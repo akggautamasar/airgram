@@ -33,6 +33,9 @@ data class Media(
     val mini: ByteArray?, // tiny inline JPEG that ships with the message (~300 bytes)
     val date: Int,
     val caption: String,
+    val performer: String = "",
+    val trackTitle: String = "",
+    val fileName: String = "",
 ) {
     val key: String get() = "$chatId:$msgId"
 }

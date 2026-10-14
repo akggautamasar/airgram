@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.airbooks.app.stream.StreamingMode
 
 /** Small settings store. Values are Compose state so the UI reacts instantly. */
 object Prefs {
@@ -24,6 +25,24 @@ object Prefs {
     var playbackSpeed by mutableFloatStateOf(1f)
         private set
 
+    // ── Streaming ──
+    /** User's chosen default mode (Settings). */
+    var streamingMode by mutableStateOf(StreamingMode.NORMAL)
+        private set
+    /** When true, opening the player uses the last mode chosen in the player instead. */
+    var rememberLastMode by mutableStateOf(true)
+        private set
+    var lastMode by mutableStateOf(StreamingMode.NORMAL)
+        private set
+    var wifiOnlyPrefetch by mutableStateOf(false)
+        private set
+    var mobileDataWarning by mutableStateOf(true)
+        private set
+    var suspendThumbsLowData by mutableStateOf(true)
+        private set
+    var maxCacheMb by mutableIntStateOf(512)
+        private set
+
     fun init(ctx: Context) {
         sp = ctx.getSharedPreferences("airbooks", Context.MODE_PRIVATE)
         prefetchMb = sp.getInt("prefetchMb", 16)
@@ -32,7 +51,43 @@ object Prefs {
         videoDecoder = sp.getString("videoDecoder", "Auto (Recommended)") ?: "Auto (Recommended)"
         autoThumbs = sp.getBoolean("autoThumbs", true)
         playbackSpeed = sp.getFloat("playbackSpeed", 1f)
+        streamingMode = modeOf(sp.getString("streamMode", null))
+        rememberLastMode = sp.getBoolean("rememberLastMode", true)
+        lastMode = modeOf(sp.getString("lastStreamMode", null))
+        wifiOnlyPrefetch = sp.getBoolean("wifiOnlyPrefetch", false)
+        mobileDataWarning = sp.getBoolean("mobileDataWarning", true)
+        suspendThumbsLowData = sp.getBoolean("suspendThumbsLowData", true)
+        maxCacheMb = sp.getInt("maxCacheMb", 512)
     }
+
+    private fun modeOf(v: String?): StreamingMode =
+        runCatching { StreamingMode.valueOf(v ?: "") }.getOrDefault(StreamingMode.NORMAL)
+
+    /** The mode a new playback session should start in. */
+    fun effectiveMode(): StreamingMode = if (rememberLastMode) lastMode else streamingMode
+
+    fun setDefaultMode(m: StreamingMode) {
+        streamingMode = m
+        sp.edit().putString("streamMode", m.name).apply()
+        if (!rememberLastMode) lastMode = m
+    }
+
+    /** Called when the user picks a mode in the player: always remembered as last-used. */
+    fun setActiveMode(m: StreamingMode) {
+        lastMode = m
+        sp.edit().putString("lastStreamMode", m.name).apply()
+    }
+
+    fun setRememberLastMode(v: Boolean) {
+        rememberLastMode = v
+        sp.edit().putBoolean("rememberLastMode", v).apply()
+        if (!v) lastMode = streamingMode
+    }
+
+    fun setWifiOnlyPrefetch(v: Boolean) { wifiOnlyPrefetch = v; sp.edit().putBoolean("wifiOnlyPrefetch", v).apply() }
+    fun setMobileDataWarning(v: Boolean) { mobileDataWarning = v; sp.edit().putBoolean("mobileDataWarning", v).apply() }
+    fun setSuspendThumbsLowData(v: Boolean) { suspendThumbsLowData = v; sp.edit().putBoolean("suspendThumbsLowData", v).apply() }
+    fun setMaxCacheMb(v: Int) { maxCacheMb = v; sp.edit().putInt("maxCacheMb", v).apply() }
     fun setPrefetch(mb: Int) {
         prefetchMb = mb
         sp.edit().putInt("prefetchMb", mb).apply()
