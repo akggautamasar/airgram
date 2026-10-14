@@ -147,9 +147,17 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
     }
 
     // Connect to the playback service (async; UI renders as soon as the controller arrives).
+    // SessionToken throws IllegalArgumentException if the manifest ever stops declaring the
+    // media3 session-service action; surface that as an in-app error instead of a hard crash.
     LaunchedEffect(Unit) {
-        val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
-        val future = MediaController.Builder(ctx, token).buildAsync()
+        val future = runCatching {
+            val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
+            MediaController.Builder(ctx, token).buildAsync()
+        }.getOrElse { e ->
+            StreamingRuntime.lastError = "SessionToken: ${e::class.java.simpleName}: ${e.message}"
+            error = e.message ?: "Cannot connect to the playback service"
+            return@LaunchedEffect
+        }
         controllerFuture = future
         future.addListener({ runCatching { controller = future.get() } }, MoreExecutors.directExecutor())
     }

@@ -31,9 +31,11 @@
             android:name=".playback.PlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
+            <!-- Media3's SessionToken resolves the service with
+                 queryIntentServices("androidx.media3.session.MediaSessionService"); without this
+                 exact action it throws IllegalArgumentException and the player screen crashes. -->
             <intent-filter>
-                <action android:name="androidx.media.session.MediaSessionService" />
-                <action android:name="android.media.session.MediaSession" />
+                <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
 

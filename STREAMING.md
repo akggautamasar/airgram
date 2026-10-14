@@ -92,8 +92,17 @@ not randomly addressable.
 
 ## 4. Crash hardening and on-device diagnostics
 
-A hard crash while opening a video traced to two failure classes that Media3 does not contain:
+A hard crash while opening a video was captured on-device by the crash handler described at
+the end of this section, and traced to three failure classes:
 
+- **Root cause (from the on-device stack trace):** `SessionToken(context, componentName)`
+  threw `IllegalArgumentException` on the main thread every time the player opened, because
+  `SessionToken` resolves the service with
+  `queryIntentServices("androidx.media3.session.MediaSessionService")` while the manifest
+  declared `androidx.media.session.MediaSessionService` (missing the `3`) plus a bogus
+  `android.media.session.MediaSession` action. The manifest now declares the exact media3
+  action, and `PlayerScreen` wraps token/controller creation in `runCatching` so any future
+  resolution failure renders as an in-app error instead of killing the process.
 - `DataSource.open/read` run on ExoPlayer's loader thread, where Media3 converts only
   `IOException` into a retryable `PlaybackException`; any other `Throwable` (e.g. a TDLib
   `TdException` from `GetFile`/`DownloadFile`, or an unexpected runtime failure) escapes as an
