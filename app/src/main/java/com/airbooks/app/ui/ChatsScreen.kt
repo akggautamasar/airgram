@@ -660,6 +660,29 @@ private fun ChatGrid(
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                             )
                         }
+                        // Pinned / muted markers: the list view has always shown them; the card
+                        // grid now matches, discreetly, in the tile corner.
+                        if (c.pinned || c.muted) {
+                            Row(
+                                Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (c.muted) {
+                                    Icon(
+                                        Icons.Filled.NotificationsOff, "Muted",
+                                        Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (c.pinned) {
+                                    Icon(
+                                        Icons.Filled.PushPin, "Pinned",
+                                        Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                     }
                     Column(Modifier.padding(10.dp)) {
                         Text(
