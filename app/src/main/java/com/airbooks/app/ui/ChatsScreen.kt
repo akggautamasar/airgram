@@ -29,23 +29,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MarkChatRead
 import androidx.compose.material.icons.filled.MarkChatUnread
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -78,6 +84,7 @@ import com.airbooks.app.tg.Kind
 import com.airbooks.app.tg.Media
 import com.airbooks.app.tg.Tg
 import com.airbooks.app.tg.chatTimeLabel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.TimeZone
 
@@ -94,12 +101,15 @@ fun ChatsScreen(
     onOpen: (ChatRow) -> Unit,
     onOpenFiles: (ChatRow) -> Unit,
     onOpenMedia: (Media) -> Unit,
-    onAccount: () -> Unit,
+    onDownloads: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     val lists by Tg.chatsByList.collectAsState()
     var selectedList by rememberSaveable { mutableStateOf("main") }
     var chatFilter by rememberSaveable { mutableStateOf("All") }
-    var grid by rememberSaveable { mutableStateOf(false) }
+    // The original dashboard leads with the card grid; list view stays one tap away.
+    var grid by rememberSaveable { mutableStateOf(true) }
+    var selectedNav by rememberSaveable { mutableStateOf("Chats") }
     var searching by rememberSaveable { mutableStateOf(false) }
     var q by rememberSaveable { mutableStateOf("") }
     var menuChat by remember { mutableStateOf<ChatRow?>(null) }
@@ -107,6 +117,25 @@ fun ChatsScreen(
     val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val tz = remember { TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000 }
+
+    // Cross-chat message/media search while the Search tab has a query — the original
+    // dashboard behaviour. There is no separate global media browser any more.
+    var global by remember { mutableStateOf<List<Media>>(emptyList()) }
+    var globalOffset by remember { mutableStateOf("") }
+    var globalLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(q, selectedNav) {
+        if (selectedNav != "Search" || q.trim().isBlank()) {
+            global = emptyList(); globalOffset = ""
+            return@LaunchedEffect
+        }
+        delay(450)
+        globalLoading = true
+        val (items, next) = runCatching { Tg.searchGlobal(q.trim(), "") }
+            .getOrDefault(emptyList<Media>() to "")
+        global = items
+        globalOffset = next
+        globalLoading = false
+    }
 
     // Folder ids -> human names (main/archive have fixed labels).
     var folderNames by remember { mutableStateOf(mapOf<String, String>()) }
@@ -119,7 +148,7 @@ fun ChatsScreen(
 
     val chats = lists[selectedList] ?: emptyList()
     val archiveCount = (lists["archive"] ?: emptyList()).size
-    val shown = remember(chats, q, chatFilter) {
+    val shown = remember(chats, q, chatFilter, selectedNav) {
         chats.filter { c ->
             val needle = q.trim()
             val matchesQuery = needle.isBlank() ||
@@ -131,7 +160,8 @@ fun ChatsScreen(
                 "Channels" -> c.subtitle == "Channel"
                 else -> true
             }
-            matchesQuery && matchesFilter
+            matchesQuery && matchesFilter &&
+                (selectedNav != "Discover" || c.subtitle == "Channel")
         }
     }
 
@@ -158,7 +188,8 @@ fun ChatsScreen(
     val now = remember { (System.currentTimeMillis() / 1000).toInt() }
 
     fun title(): String = when {
-        searching -> "Search chats"
+        searching -> "Search"
+        selectedNav == "Discover" -> "Discover"
         selectedList == "main" -> "Chats"
         selectedList == "archive" -> "Archive"
         else -> folderNames[selectedList.removePrefix("folder:")] ?: Tg.listLabel(selectedList)
@@ -171,7 +202,10 @@ fun ChatsScreen(
                     if (searching) {
                         TextField(
                             value = q, onValueChange = { q = it },
-                            placeholder = { Text("Search chats") }, singleLine = true,
+                            placeholder = {
+                                Text(if (selectedNav == "Search") "Search messages everywhere" else "Search chats")
+                            },
+                            singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent,
@@ -180,8 +214,12 @@ fun ChatsScreen(
                     } else Text(title())
                 },
                 actions = {
-                    IconButton(onClick = { searching = !searching; if (!searching) q = "" }) {
-                        Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, "Search chats")
+                    IconButton(onClick = {
+                        searching = !searching
+                        selectedNav = if (searching) "Search" else "Chats"
+                        if (!searching) q = ""
+                    }) {
+                        Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, "Search")
                     }
                     IconButton(onClick = { grid = !grid }) {
                         Icon(
@@ -189,17 +227,48 @@ fun ChatsScreen(
                             if (grid) "List view" else "Grid view",
                         )
                     }
-                    IconButton(onClick = onAccount) {
-                        Icon(Icons.Filled.Person, "Account and settings")
-                    }
                 },
             )
+        },
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = selectedNav == "Discover",
+                    onClick = { selectedNav = "Discover"; chatFilter = "All" },
+                    icon = { Icon(Icons.Filled.Explore, null) },
+                    label = { Text("Discover") },
+                )
+                NavigationBarItem(
+                    selected = selectedNav == "Chats",
+                    onClick = { selectedNav = "Chats"; chatFilter = "All" },
+                    icon = { Icon(Icons.Filled.Chat, null) },
+                    label = { Text("Chats") },
+                )
+                NavigationBarItem(
+                    selected = selectedNav == "Search",
+                    onClick = { selectedNav = "Search"; searching = true },
+                    icon = { Icon(Icons.Filled.Search, null) },
+                    label = { Text("Search") },
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onDownloads,
+                    icon = { Icon(Icons.Filled.Download, null) },
+                    label = { Text("Downloads") },
+                )
+                NavigationBarItem(
+                    selected = false,
+                    onClick = onSettings,
+                    icon = { Icon(Icons.Filled.Settings, null) },
+                    label = { Text("Settings") },
+                )
+            }
         },
     ) { pad ->
         Column(Modifier.padding(pad)) {
             ConnectionBanner()
             // Chat lists: main + archive + user folders (only shown when there is more than one).
-            if (lists.size > 1) {
+            if (lists.size > 1 && selectedNav != "Search") {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                         .padding(horizontal = 12.dp, vertical = 4.dp),
@@ -211,7 +280,7 @@ fun ChatsScreen(
                         } else Tg.listLabel(key)
                         FilterChip(
                             selected = selectedList == key,
-                            onClick = { selectedList = key },
+                            onClick = { selectedList = key; selectedNav = "Chats" },
                             label = { Text(label) },
                         )
                     }
@@ -225,14 +294,39 @@ fun ChatsScreen(
                 listOf("All", "Private", "Groups", "Channels").forEach { filter ->
                     FilterChip(
                         selected = chatFilter == filter,
-                        onClick = { chatFilter = filter },
+                        onClick = { chatFilter = filter; if (filter != "All") selectedNav = "Chats" },
                         label = { Text(filter) },
                     )
                 }
             }
 
-            if (grid) {
-                Column(Modifier.fillMaxSize()) {
+            when {
+                selectedNav == "Search" && q.trim().isNotBlank() -> GlobalResults(
+                    items = global,
+                    loading = globalLoading,
+                    offset = globalOffset,
+                    onMore = {
+                        scope.launch {
+                            globalLoading = true
+                            val (more, next) = runCatching { Tg.searchGlobal(q.trim(), globalOffset) }
+                                .getOrDefault(emptyList<Media>() to "")
+                            global = global + more
+                            globalOffset = next
+                            globalLoading = false
+                        }
+                    },
+                    onOpen = onOpenMedia,
+                )
+                shown.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (lists.values.all { it.isEmpty() }) "Loading your chats…" else "No chats match",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                grid -> Column(Modifier.fillMaxSize()) {
+                    if (recent.isNotEmpty() && q.isBlank() && selectedList == "main") {
+                        ContinueRail(recent, onOpenMedia)
+                    }
                     ChatGrid(
                         shown, onOpen, menuChat = { menuChat = it },
                         modifier = Modifier.weight(1f),
@@ -259,50 +353,15 @@ fun ChatsScreen(
                         }
                     }
                 }
-            } else {
-                LazyColumn(
+
+                else -> LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 8.dp),
                 ) {
                     // Continue watching / listening.
                     if (recent.isNotEmpty() && q.isBlank() && selectedList == "main") {
-                        item(key = "continue") {
-                            Column {
-                                Text(
-                                    "Continue",
-                                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.titleSmall,
-                                )
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    lazyItems(recent, key = { it.key }) { e ->
-                                        Surface(
-                                            Modifier.width(150.dp).clip(RoundedCornerShape(14.dp))
-                                                .clickable { onOpenMedia(Recent.toMedia(e)) },
-                                            shape = RoundedCornerShape(14.dp),
-                                            color = MaterialTheme.colorScheme.surfaceVariant,
-                                        ) {
-                                            Column(Modifier.padding(10.dp)) {
-                                                Text(
-                                                    (if (e.kind == Kind.AUDIO) "♪ " else "▶ ") + e.name,
-                                                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                                    fontSize = 12.sp,
-                                                )
-                                                Spacer(Modifier.height(6.dp))
-                                                Text(
-                                                    "at ${fmtDur((e.positionMs / 1000).toInt())}",
-                                                    fontSize = 10.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        item(key = "continue") { ContinueRail(recent, onOpenMedia) }
                     }
                     // Archived chats entry.
                     if (archiveCount > 0 && selectedList != "archive" && q.isBlank()) {
@@ -618,6 +677,95 @@ private fun ChatGrid(
                                 .padding(horizontal = 7.dp, vertical = 4.dp),
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** The original dashboard's Continue watching / listening rail. */
+@Composable
+private fun ContinueRail(recent: List<Recent.Entry>, onOpenMedia: (Media) -> Unit) {
+    Column {
+        Text(
+            "Continue",
+            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            lazyItems(recent, key = { it.key }) { e ->
+                Surface(
+                    Modifier.width(150.dp).clip(RoundedCornerShape(14.dp))
+                        .clickable { onOpenMedia(Recent.toMedia(e)) },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text(
+                            (if (e.kind == Kind.AUDIO) "\u266a " else "\u25b6 ") + e.name,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            fontSize = 12.sp,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "at ${fmtDur((e.positionMs / 1000).toInt())}",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Inline results of Telegram's own cross-chat `searchMessages` while the Search tab has a query
+ * (the original dashboard behaviour — restored from Git history, with paged "More results").
+ */
+@Composable
+private fun GlobalResults(
+    items: List<Media>,
+    loading: Boolean,
+    offset: String,
+    onMore: () -> Unit,
+    onOpen: (Media) -> Unit,
+) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        lazyItems(items, key = { it.key }) { m ->
+            Row(
+                Modifier.fillMaxWidth().clickable { onOpen(m) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(kindIcon(m.kind), fontSize = 22.sp)
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(m.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (m.kind == Kind.LINK) m.fileName.ifBlank { m.name }
+                        else "${fmtSize(m.size)} \u00b7 ${fmtDate(m.date)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        item {
+            Row(
+                Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator()
+                } else if (offset.isNotEmpty()) {
+                    Button(onClick = onMore) { Text("More results") }
+                } else if (items.isEmpty()) {
+                    Text("No messages found", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

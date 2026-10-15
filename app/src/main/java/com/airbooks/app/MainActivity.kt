@@ -1,5 +1,7 @@
 package com.airbooks.app
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -8,25 +10,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Audiotrack
-import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,14 +26,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.airbooks.app.download.DownloadManager
 import com.airbooks.app.tg.ChatRow
 import com.airbooks.app.tg.Kind
 import com.airbooks.app.tg.Media
-import com.airbooks.app.tg.Section
 import com.airbooks.app.tg.Tg
 import com.airbooks.app.ui.AirTheme
 import com.airbooks.app.ui.ChatsScreen
@@ -56,11 +41,9 @@ import com.airbooks.app.ui.DownloadsScreen
 import com.airbooks.app.ui.FilesScreen
 import com.airbooks.app.ui.ImageScreen
 import com.airbooks.app.ui.LoginScreen
-import com.airbooks.app.ui.MediaSectionScreen
 import com.airbooks.app.ui.OtherScreen
 import com.airbooks.app.ui.PdfScreen
 import com.airbooks.app.ui.PlayerScreen
-import com.airbooks.app.ui.SearchScreen
 import com.airbooks.app.ui.SettingsScreen
 import org.drinkless.tdlib.TdApi
 
@@ -77,15 +60,20 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Navigation model: five top-level destinations (Videos, Audio, Docs, Photos, Chats — the four
- * media sections of the original browser plus Chats as a first-class destination) and a stack of
- * pushed screens. Search, downloads and settings live on the stack, reachable from the media
- * top bars and the Chats account button, so no existing screen is lost.
+ * Navigation model — the original AirGram dashboard architecture, restored:
+ *
+ * Home is the dashboard ([ChatsScreen]: your Telegram chats with Discover/Search tabs, folders,
+ * filters and the Continue rail, plus Downloads and Settings entries). Opening a chat pushes its
+ * real conversation ([ConversationScreen]); the conversation's top bar and long-press menu open
+ * the chat's own media browser ([FilesScreen]), whose sections (Videos / Audio / Docs / Photos /
+ * Links / Voice) query **that chat id only**. Viewers and the player are pushed on top.
+ *
+ * There are no global cross-chat media destinations: media browsing always belongs to a chat.
+ * The pushed stack survives rotation and process death through [NavCodec].
  */
 sealed interface Screen {
-    data object Search : Screen
-    data object Downloads : Screen
     data object Settings : Screen
+    data object Downloads : Screen
     data class Conversation(val chatId: Long, val title: String) : Screen
     data class Files(val chatId: Long, val title: String) : Screen
     data class Play(val item: Media, val queue: List<Media>, val chatTitle: String) : Screen
@@ -94,10 +82,8 @@ sealed interface Screen {
     data class Image(val items: List<Media>, val start: Media) : Screen
 }
 
-/** Current destination index + pushed screens; value type so it can be saved as one string. */
+/** Pushed screens; an empty stack means the dashboard. Saved as one string via [NavCodec]. */
 internal data class NavState(val dest: Int, val stack: List<Screen>)
-
-private data class Dest(val label: String, val icon: ImageVector)
 
 @Composable
 fun Root() {
@@ -131,30 +117,26 @@ fun Root() {
 
 @Composable
 fun MainNav() {
+    // Saved, so rotation/process death returns to the same open conversation or viewer.
+    // `dest` is a NavCodec artefact kept for format compatibility; the dashboard is always 0.
     val saver = remember {
         Saver<NavState, String>(
-            save = { NavCodec.encode(it.dest, it.stack) },
+            save = { NavCodec.encode(0, it.stack) },
             restore = { encoded ->
-                val (dest, stack) = NavCodec.decode(encoded)
-                NavState(dest, stack)
+                val (_, stack) = NavCodec.decode(encoded)
+                NavState(0, stack)
             },
         )
     }
-    // Saved, so rotation/process death returns to the same tab and the same open conversation.
     var nav by rememberSaveable(stateSaver = saver) { mutableStateOf(NavState(0, emptyList())) }
-
-    val lists by Tg.chatsByList.collectAsState()
+    val ctx = LocalContext.current
 
     fun push(s: Screen) {
-        nav = NavState(nav.dest, nav.stack + s)
+        nav = NavState(0, nav.stack + s)
     }
 
     fun pop() {
-        if (nav.stack.isNotEmpty()) nav = NavState(nav.dest, nav.stack.dropLast(1))
-    }
-
-    fun gotoDest(i: Int) {
-        if (nav.dest != i || nav.stack.isNotEmpty()) nav = NavState(i, emptyList())
+        if (nav.stack.isNotEmpty()) nav = NavState(0, nav.stack.dropLast(1))
     }
 
     fun openMedia(m: Media, all: List<Media>) {
@@ -162,92 +144,35 @@ fun MainNav() {
             Kind.VIDEO, Kind.AUDIO -> push(Screen.Play(m, all, ""))
             Kind.PDF -> push(Screen.Pdf(m))
             Kind.IMAGE -> push(Screen.Image(all.filter { it.kind == Kind.IMAGE }, m))
+            // Links open in the browser — never in a viewer, never downloaded.
+            Kind.LINK -> {
+                val url = m.fileName.ifBlank { m.name }
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            }
             Kind.OTHER -> push(Screen.Other(m))
         }
     }
 
-    BackHandler(enabled = nav.stack.isNotEmpty() || nav.dest != 0) {
-        if (nav.stack.isNotEmpty()) pop() else gotoDest(0)
-    }
+    BackHandler(enabled = nav.stack.isNotEmpty()) { pop() }
 
     val current = nav.stack.lastOrNull()
     if (current != null) {
-        Detail(current, lists, ::pop, ::push, ::openMedia)
+        Detail(current, Tg.chatsByList.collectAsState().value, ::pop, ::push, ::openMedia)
         return
     }
 
-    val dests = listOf(
-        Dest("Videos", Icons.Filled.VideoLibrary),
-        Dest("Audio", Icons.Filled.Audiotrack),
-        Dest("Docs", Icons.Filled.Description),
-        Dest("Photos", Icons.Filled.PhotoLibrary),
-        Dest("Chats", Icons.Filled.Chat),
+    // ── The dashboard (original layout): chats with Discover/Search tabs, folders, filters,
+    //    the Continue rail, and Downloads/Settings entries in its own bottom bar. ──
+    ChatsScreen(
+        onOpen = { push(Screen.Conversation(it.id, it.title)) },
+        onOpenFiles = { push(Screen.Files(it.id, it.title)) },
+        onOpenMedia = { m -> openMedia(m, listOf(m)) },
+        onDownloads = { push(Screen.Downloads) },
+        onSettings = { push(Screen.Settings) },
     )
-    // Compact phones get a bottom bar; wider screens (tablets, foldables, desktop) get a rail.
-    val wide = LocalConfiguration.current.screenWidthDp >= 600
-
-    if (wide) {
-        Row(Modifier.fillMaxSize()) {
-            NavigationRail(Modifier.fillMaxHeight()) {
-                dests.forEachIndexed { i, d ->
-                    NavigationRailItem(
-                        selected = nav.dest == i,
-                        onClick = { gotoDest(i) },
-                        icon = { Icon(d.icon, d.label) },
-                        label = { Text(d.label) },
-                    )
-                }
-            }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                DestContent(nav.dest, ::push, ::openMedia)
-            }
-        }
-    } else {
-        Column(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxSize()) {
-                DestContent(nav.dest, ::push, ::openMedia)
-            }
-            NavigationBar {
-                dests.forEachIndexed { i, d ->
-                    NavigationBarItem(
-                        selected = nav.dest == i,
-                        onClick = { gotoDest(i) },
-                        icon = { Icon(d.icon, d.label) },
-                        label = { Text(d.label) },
-                    )
-                }
-            }
-        }
-    }
 }
 
-/** Body of the five destinations. */
-@Composable
-private fun DestContent(
-    dest: Int,
-    push: (Screen) -> Unit,
-    openMedia: (Media, List<Media>) -> Unit,
-) {
-    when (dest) {
-        4 -> ChatsScreen(
-            onOpen = { push(Screen.Conversation(it.id, it.title)) },
-            onOpenFiles = { push(Screen.Files(it.id, it.title)) },
-            onOpenMedia = { m -> openMedia(m, listOf(m)) },
-            onAccount = { push(Screen.Settings) },
-        )
-        // Destinations 0..3 are the four media sections, in the order the bar lists them.
-        else -> MediaSectionScreen(
-            section = Section.values()[dest.coerceIn(0, 3)],
-            onOpen = { m, all -> openMedia(m, all) },
-            onDownload = { DownloadManager.enqueue(it) },
-            onOpenSearch = { push(Screen.Search) },
-            onOpenDownloads = { push(Screen.Downloads) },
-            onOpenSettings = { push(Screen.Settings) },
-        )
-    }
-}
-
-/** A pushed screen: conversation, chat file browser, or one of the viewers. */
+/** A pushed screen: conversation, chat media browser, utility screen, or one of the viewers. */
 @Composable
 private fun Detail(
     s: Screen,
@@ -271,6 +196,7 @@ private fun Detail(
                 onDownload = { DownloadManager.enqueue(it) },
             )
         }
+        // Per-chat media browser: every section queries this chatId only (Tg.searchMedia).
         is Screen.Files -> FilesScreen(
             chatId = s.chatId,
             title = s.title,
@@ -278,17 +204,11 @@ private fun Detail(
             onDownload = { DownloadManager.enqueue(it) },
             onOpen = { m, all -> openMedia(m, all) },
         )
-        Screen.Search -> SearchScreen(
-            onOpenChat = { push(Screen.Conversation(it.id, it.title)) },
-            onOpenMedia = { m, all -> openMedia(m, all) },
-            onBack = pop,
-        )
         Screen.Downloads -> DownloadsScreen(onBack = pop)
         Screen.Settings -> SettingsScreen(onBack = pop)
         is Screen.Play -> PlayerScreen(s.item, s.queue, s.chatTitle, onBack = pop)
         is Screen.Pdf -> PdfScreen(s.item, onBack = pop)
         is Screen.Other -> OtherScreen(s.item, onBack = pop)
         is Screen.Image -> ImageScreen(s.items, s.start, onBack = pop)
-        else -> {}
     }
 }

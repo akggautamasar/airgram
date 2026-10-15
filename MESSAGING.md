@@ -12,11 +12,11 @@ tg/Messages.kt      pure model: Msg, ChatItem, ChatStruct, previews, ticks, cale
 tg/MsgMapper.kt     TdApi.Message -> Msg (every content type in the pinned schema)
 tg/ChatRepo.kt      per-conversation cache + live update application (LRU-bounded)
 tg/Tg.kt            TDLib calls, update routing, user/presence cache, chat-list publishing
-ui/ChatsScreen.kt   chat list (Telegram rows, grid option, folders, archive, filters)
+ui/ChatsScreen.kt   the dashboard: Discover/Chats/Search tabs, folders, archive, filters,
+                    card grid (default) + Telegram rows, Continue rail, inline global search
 ui/ConversationScreen.kt  one conversation: bubbles, composer, reactions, pagination
-ui/SearchScreen.kt  global message/media search + matching chats
-ui/MediaSectionScreen.kt  global Videos/Audio/Docs/Photos (all chats)
-MainActivity.kt     Videos/Audio/Docs/Photos/Chats bar + pushed detail stack
+ui/FilesScreen.kt   per-chat media browser: Videos/Audio/Docs/Photos/Links/Voice
+MainActivity.kt     original dashboard architecture: chats home + pushed detail stack
 NavCodec.kt         pure codec that persists navigation across rotation/process death
 ```
 
@@ -48,8 +48,8 @@ private chats, and `permissions.canSendBasicMessages`.
   All / Private / Groups / Channels chips keep working; `kind` adds `bot`/`saved` for logic only.
 
 Controls: tap opens the conversation, the folder icon opens that chat's media library
-(Videos/Audio/Docs/Photos), long-press (or the grid card) opens Pin / Mute / Mark read-unread /
-Media and files. `toggleChatIsPinned`, `setChatNotificationSettings` (mute = one year, Telegram's
+(Videos/Audio/Docs/Photos/Links/Voice), long-press (or the grid card) opens Pin / Mute / Mark
+read-unread / Media and files. `toggleChatIsPinned`, `setChatNotificationSettings` (mute = one year, Telegram's
 own default) and `toggleChatIsMarkedAsUnread` are real TDLib calls; marking read also issues
 `viewMessages` with the real last message id, since the flag alone would leave the badge.
 
@@ -144,25 +144,47 @@ Auto-thumbnails / Low-Data / Wi-Fi-only-prefetch gates.
 
 ## Navigation
 
-Five destinations — **Videos, Audio, Docs, Photos, Chats** — with a `NavigationBar` on phones and a
-`NavigationRail` at `screenWidthDp >= 600` (tablets, foldables, desktop). The four media sections
-are the original file browser's sections promoted to first-class navigation; Chats sits beside
-them. Global search, Downloads and Settings are pushed screens reachable from every media
-section's overflow menu and the Chats account button, so nothing that used to be one tap away is
-lost. Conversations, per-chat file browsers and viewers are pushed onto the same detail stack, so
-the bottom bar hides while you read a chat and Back returns through the stack exactly as before.
+The **original AirGram dashboard architecture, restored**: one stack, home is the chats
+dashboard, and there are *no* global cross-chat media destinations. The dashboard keeps its
+original bottom bar — **Discover | Chats | Search | Downloads | Settings** — its folder chips
+(main / archive / user folders), its All / Private / Groups / Channels filter chips, the Continue
+rail, the three-column card grid (default, with a list-view toggle) and the inline
+`searchMessages` results on the Search tab. Discover filters the same real chat list to channels,
+exactly as before.
 
-`NavCodec` serialises destination + stack to one delimited string for `rememberSaveable`, so
-rotation and process death restore the same tab and the same open conversation. Two honest limits,
+Opening a chat pushes its **conversation** (real message timeline); the conversation's top bar
+and long-press menu push that chat's **media browser** (`FilesScreen`), whose sections query the
+selected chat id only:
+
+| Section | TDLib query (scoped to `chatId`) |
+| --- | --- |
+| Videos | `searchChatMessages` + `SearchMessagesFilterVideo` |
+| Audio | `searchChatMessages` + `SearchMessagesFilterAudio` |
+| Docs | `searchChatMessages` + `SearchMessagesFilterDocument` |
+| Photos | `searchChatMessages` + `SearchMessagesFilterPhoto` |
+| Links | `searchChatMessages` + `SearchMessagesFilterUrl` |
+| Voice | `searchChatMessages` + `SearchMessagesFilterVoiceNote` |
+
+Every section pages with TDLib's own `nextFromMessageId` cursor, deduplicates by stable message
+id, and lists **remote** attachments — nothing needs to be downloaded to appear. Results are
+cached per `chatId|section|query`, so one chat can never show another chat's media. Voice notes,
+round video notes and GIFs used to be dropped by the media mapper (`toMedia` returned null for
+them) and were therefore missing from these sections; they are now mapped to real playable items.
+Links open in the browser (`ACTION_VIEW` on the message's real URL — the webpage preview's URL
+when Telegram parsed one, otherwise the first URL in the text); they are never "downloaded".
+
+Viewers and the player push on top of the same stack, so Back returns through
+conversation → dashboard exactly as before, and switching chats always re-queries with the new
+chat's id.
+
+`NavCodec` serialises the pushed stack to one delimited string for `rememberSaveable`, so
+rotation and process death restore the same open conversation or viewer. Two honest limits,
 both encoded in the codec and covered by `NavCodecTest`:
 
 * `Media.mini` (the ~300-byte inline preview) is not persisted; it is re-fetched by file id.
 * Saved-state transactions are limited to ~1 MB, so a payload over 90 000 characters is re-encoded
   with single-item queues. The open item still restores exactly; only its next/previous queue is
   shortened. This is a deliberate trade instead of a `TransactionTooLargeException` crash.
-
-Switching destination clears the pushed stack (standard bottom-nav behaviour); state within a
-destination is preserved while you are in it.
 
 ## Offline, errors and permissions
 

@@ -50,7 +50,6 @@ internal object NavCodec {
         for (s in stack) {
             sb.append(S)
             when (s) {
-                Screen.Search -> sb.append("search")
                 Screen.Downloads -> sb.append("downloads")
                 Screen.Settings -> sb.append("settings")
                 is Screen.Conversation -> sb.append(tag("conv", s.chatId, esc(s.title)))
@@ -93,7 +92,6 @@ internal object NavCodec {
     // ─────────────────────────── decode ───────────────────────────
 
     private fun decodeScreen(f: List<String>): Screen? = when (f.getOrNull(0)) {
-        "search" -> Screen.Search
         "downloads" -> Screen.Downloads
         "settings" -> Screen.Settings
         "conv" -> Screen.Conversation(f.long(1), f.str(2))

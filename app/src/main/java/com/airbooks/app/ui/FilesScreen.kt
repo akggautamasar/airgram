@@ -34,8 +34,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -128,7 +128,11 @@ fun FilesScreen(
     ) { pad ->
         Column(Modifier.padding(pad)) {
             ConnectionBanner()
-            TabRow(selectedTabIndex = section.ordinal) {
+            // Six per-chat sections; scrollable so every label stays readable on narrow phones.
+            ScrollableTabRow(
+                selectedTabIndex = section.ordinal,
+                edgePadding = 12.dp,
+            ) {
                 Section.values().forEach { s ->
                     Tab(selected = section == s, onClick = { section = s }, text = { Text(s.label) })
                 }
@@ -181,11 +185,18 @@ internal fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
                 Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick(m) }
             ) {
                 TgImage(m.thumbId, m.mini, Modifier.fillMaxSize(), enabled = thumbsOn)
-                IconButton(
-                    onClick = { onDownload(m) },
-                    modifier = Modifier.align(Alignment.TopEnd).size(30.dp),
-                ) {
-                    Icon(Icons.Filled.Download, "Download", tint = Color.White, modifier = Modifier.size(18.dp))
+                if (m.thumbId == 0 && m.mini == null) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(kindIcon(m.kind), fontSize = 30.sp)
+                    }
+                }
+                if (m.kind != Kind.LINK) {
+                    IconButton(
+                        onClick = { onDownload(m) },
+                        modifier = Modifier.align(Alignment.TopEnd).size(30.dp),
+                    ) {
+                        Icon(Icons.Filled.Download, "Download", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
                 }
                 if (m.kind == Kind.VIDEO) {
                     Text(
@@ -225,11 +236,15 @@ internal fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(m.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    val meta = buildList {
-                        add(fmtSize(m.size))
-                        if (m.duration > 0) add(fmtDur(m.duration))
-                        add(fmtDate(m.date))
-                    }.joinToString(" · ")
+                    val meta = if (m.kind == Kind.LINK) {
+                        m.fileName.ifBlank { m.name }
+                    } else {
+                        buildList {
+                            add(fmtSize(m.size))
+                            if (m.duration > 0) add(fmtDur(m.duration))
+                            add(fmtDate(m.date))
+                        }.joinToString(" · ")
+                    }
                     Text(meta, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (m.caption.isNotBlank()) {
@@ -238,8 +253,10 @@ internal fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                IconButton(onClick = { onDownload(m) }) {
-                    Icon(Icons.Filled.Download, "Download")
+                if (m.kind != Kind.LINK) {
+                    IconButton(onClick = { onDownload(m) }) {
+                        Icon(Icons.Filled.Download, "Download")
+                    }
                 }
             }
         }

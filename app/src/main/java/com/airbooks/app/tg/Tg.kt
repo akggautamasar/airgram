@@ -771,23 +771,6 @@ object Tg {
         client.send(TdApi.DeleteMessages(chatId, longArrayOf(msgId), revoke)) {}
     }
 
-    /** Media search across all chats — powers the top-level Videos/Audio/Docs/Photos tabs. */
-    suspend fun searchMediaGlobal(section: Section, query: String, offset: String): Pair<List<Media>, String> {
-        val req = TdApi.SearchMessages()
-        req.chatList = null
-        req.query = query
-        req.offset = offset
-        req.limit = 40
-        req.filter = when (section) {
-            Section.VIDEOS -> TdApi.SearchMessagesFilterVideo()
-            Section.AUDIO -> TdApi.SearchMessagesFilterAudio()
-            Section.DOCS -> TdApi.SearchMessagesFilterDocument()
-            Section.PHOTOS -> TdApi.SearchMessagesFilterPhoto()
-        }
-        val r = send(req)
-        return r.messages.mapNotNull { toMedia(it) } to r.nextOffset.orEmpty()
-    }
-
     private fun refetchMessage(chatId: Long, msgId: Long) {
         if (!isReady) return
         scope.launch {
@@ -809,6 +792,9 @@ object Tg {
             Section.AUDIO -> TdApi.SearchMessagesFilterAudio()
             Section.DOCS -> TdApi.SearchMessagesFilterDocument()
             Section.PHOTOS -> TdApi.SearchMessagesFilterPhoto()
+            // Real Telegram filters, scoped to this one chat id — never cross-chat.
+            Section.LINKS -> TdApi.SearchMessagesFilterUrl()
+            Section.VOICE -> TdApi.SearchMessagesFilterVoiceNote()
         }
         val req = TdApi.SearchChatMessages()
         req.chatId = chatId
@@ -818,7 +804,9 @@ object Tg {
         req.limit = 40
         req.filter = filter
         val r = send(req)
-        val items = r.messages.mapNotNull { toMedia(it) }
+        val items = r.messages.mapNotNull {
+            if (section == Section.LINKS) toLinkMedia(it) else toMedia(it)
+        }
         return Page(items, if (r.messages.isEmpty()) 0L else r.nextFromMessageId)
     }
 
@@ -872,8 +860,74 @@ object Tg {
                     c.photo.minithumbnail?.data, m.date, c.caption.text
                 )
             }
+            // Previously dropped (returned null) — these are real, playable attachments that
+            // belong in the chat's media sections even though they were never "files".
+            is TdApi.MessageVoiceNote -> {
+                val v = c.voiceNote
+                Media(
+                    m.chatId, m.id, Kind.AUDIO,
+                    "Voice message", v.mimeType,
+                    maxOf(v.voice.size, v.voice.expectedSize), v.duration,
+                    seen(v.voice), v.voice.id, 0, null, m.date, "",
+                )
+            }
+            is TdApi.MessageVideoNote -> {
+                val v = c.videoNote
+                Media(
+                    m.chatId, m.id, Kind.VIDEO,
+                    "Video message", "",
+                    maxOf(v.video.size, v.video.expectedSize), v.duration,
+                    seen(v.video), v.video.id, seen(v.thumbnail?.file),
+                    v.minithumbnail?.data, m.date, "",
+                )
+            }
+            is TdApi.MessageAnimation -> {
+                val a = c.animation
+                Media(
+                    m.chatId, m.id, Kind.VIDEO,
+                    nameOf(a.fileName, c.caption.text, "GIF", m.date), a.mimeType,
+                    maxOf(a.file.size, a.file.expectedSize), a.duration,
+                    seen(a.file), a.file.id, seen(a.thumbnail?.file),
+                    a.minithumbnail?.data, m.date, c.caption.text,
+                )
+            }
             else -> null
         }
+    }
+
+    private val URL_RE = Regex("""https?://[^\s<>"']+""")
+
+    /**
+     * One Links-section item: the webpage preview when Telegram parsed one, otherwise the first
+     * URL in the message/caption text. The URL travels in `fileName` (persisted by NavCodec).
+     */
+    private fun toLinkMedia(m: TdApi.Message): Media? {
+        val text: String
+        val page: TdApi.WebPage?
+        when (val c = m.content) {
+            is TdApi.MessageText -> { text = c.text?.text.orEmpty(); page = c.webPage }
+            is TdApi.MessagePhoto -> { text = c.caption?.text.orEmpty(); page = null }
+            is TdApi.MessageVideo -> { text = c.caption?.text.orEmpty(); page = null }
+            is TdApi.MessageAnimation -> { text = c.caption?.text.orEmpty(); page = null }
+            is TdApi.MessageDocument -> { text = c.caption?.text.orEmpty(); page = null }
+            else -> return null
+        }
+        val url = page?.url?.takeIf { it.isNotBlank() } ?: URL_RE.find(text)?.value ?: return null
+        val name = page?.let { pg ->
+            val site = pg.siteName?.takeIf { it.isNotBlank() }
+            val ttl = pg.title?.takeIf { it.isNotBlank() }
+            when {
+                site != null && ttl != null -> "$site — $ttl"
+                site != null -> site
+                ttl != null -> ttl
+                else -> null
+            }
+        } ?: url
+        val desc = page?.description?.text?.takeIf { it.isNotBlank() } ?: text
+        return Media(
+            m.chatId, m.id, Kind.LINK, name, "text/uri-list", 0L, 0,
+            0, 0, 0, null, m.date, desc.take(300), fileName = url,
+        )
     }
 
     private fun nameOf(name: String, caption: String, fallback: String, date: Int): String =

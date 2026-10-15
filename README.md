@@ -48,8 +48,9 @@ app/src/main/java/com/airbooks/app/
   tg/Messages.kt      pure chat-message model + list structuring (unit-tested)
   tg/MsgMapper.kt     TDLib message → Msg (every content type, degrades safely)
   tg/ChatRepo.kt      per-conversation cache, paged history, live updates
-  ui/                 Login, Chats, Conversation, Search, Files, Player, Image, PDF, Settings
-  MainActivity.kt     Videos/Audio/Docs/Photos/Chats bar (rail on wide screens) + detail stack
+  ui/                 Login, Chats (dashboard), Conversation, Files (per-chat media), Player,
+                      Image, PDF, Downloads, Settings
+  MainActivity.kt     original dashboard nav: chats home + pushed detail stack
   NavCodec.kt         pure navigation persistence across rotation and process death
 ```
 
@@ -57,9 +58,11 @@ app/src/main/java/com/airbooks/app/
 Real Telegram conversations over the same on-device TDLib session — no second login, no backend,
 no placeholder content. Paged history (40 messages at a time, LRU-bounded cache), live updates,
 sending text and attachments, replies, edits, deletions, reactions, read receipts, presence,
-drafts, pinned/muted/archived chats, folders and global search. Main navigation is Videos, Audio,
-Docs, Photos and Chats — a bottom bar on phones, a rail on wide screens — with search, downloads
-and settings one overflow tap away; the player adds a gesture layer
+drafts, pinned/muted/archived chats, folders and global message search. The dashboard is the
+original one — your chats (Discover / Chats / Search tabs, folders, filters, card grid, Continue
+rail, Downloads and Settings in its bottom bar) — and media browsing is **per chat**: opening a
+conversation and its media library shows that chat's own Videos / Audio / Docs / Photos / Links /
+Voice, never content collected across other chats. The player adds a gesture layer
 (double-tap seek, brightness/volume swipes, swipe-to-seek preview, control lock), aspect-ratio
 cycling, split audio/subtitle pickers, a sleep timer with "end of this item" and a playback-info
 dialog that reports only real values. Design, layering and honest limits: **MESSAGING.md**

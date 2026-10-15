@@ -58,6 +58,7 @@ fun kindIcon(k: Kind): String = when (k) {
     Kind.PDF -> "📄"
     Kind.IMAGE -> "🖼"
     Kind.OTHER -> "📎"
+    Kind.LINK -> "🔗"
 }
 
 tailrec fun Context.findActivity(): Activity? = when (this) {

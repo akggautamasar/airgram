@@ -5,10 +5,15 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
-enum class Kind { VIDEO, AUDIO, PDF, IMAGE, OTHER }
+enum class Kind {
+    VIDEO, AUDIO, PDF, IMAGE, OTHER,
+    /** A shared web link (chat Links section); `fileName` carries the URL. */
+    LINK,
+}
 
 enum class Section(val label: String) {
-    VIDEOS("Videos"), AUDIO("Audio"), DOCS("Docs"), PHOTOS("Photos")
+    VIDEOS("Videos"), AUDIO("Audio"), DOCS("Docs"), PHOTOS("Photos"),
+    LINKS("Links"), VOICE("Voice"),
 }
 
 data class ChatRow(
@@ -71,14 +76,12 @@ class ListState {
     val items = mutableStateListOf<Media>()
     var next: Long = -1L
 
-    /** String cursor used by the global (cross-chat) media sections. */
-    var nextStr: String = ""
     var done by mutableStateOf(false)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
 
     fun reset() {
-        items.clear(); next = -1L; nextStr = ""; done = false; error = null
+        items.clear(); next = -1L; done = false; error = null
     }
 }
 
@@ -89,10 +92,6 @@ object Repo {
     fun state(chatId: Long, s: Section, q: String): ListState =
         map.getOrPut("$chatId|${s.name}|$q") { ListState() }
 
-    /** State for the top-level Videos/Audio/Docs/Photos destinations (all chats). */
-    fun globalState(s: Section, q: String): ListState =
-        map.getOrPut("global|${s.name}|$q") { ListState() }
-
     suspend fun loadMore(chatId: Long, s: Section, q: String, st: ListState) {
         if (st.loading || st.done) return
         st.loading = true
@@ -102,24 +101,6 @@ object Repo {
             val known = st.items.mapTo(HashSet()) { it.msgId }
             st.items.addAll(p.items.filter { it.msgId !in known })
             if (p.next == 0L) st.done = true else st.next = p.next
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            st.error = e.message ?: "Failed to load"
-        } finally {
-            st.loading = false
-        }
-    }
-
-    suspend fun loadMoreGlobal(s: Section, q: String, st: ListState) {
-        if (st.loading || st.done) return
-        st.loading = true
-        st.error = null
-        try {
-            val (items, next) = Tg.searchMediaGlobal(s, q, st.nextStr)
-            val known = st.items.mapTo(HashSet()) { it.key }
-            st.items.addAll(items.filter { it.key !in known })
-            if (next.isEmpty() || items.isEmpty()) st.done = true else st.nextStr = next
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
