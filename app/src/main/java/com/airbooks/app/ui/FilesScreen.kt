@@ -24,11 +24,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,8 +88,29 @@ fun FilesScreen(
     var query by remember { mutableStateOf("") }
     var activeQuery by remember { mutableStateOf("") }
     LaunchedEffect(query) { delay(450); activeQuery = query.trim() }
+    // Sorting applies to the pages already loaded from Telegram; paging itself always follows
+    // Telegram's own newest-first order (the API offers no server-side sort).
+    var sort by rememberSaveable { mutableStateOf("new") }
+    var sortMenu by remember { mutableStateOf(false) }
+    val sortOptions = listOf(
+        "new" to "Newest first",
+        "old" to "Oldest first",
+        "size" to "Largest first",
+        "name" to "Name A–Z",
+        "duration" to "Longest first",
+    )
 
     val st = remember(chatId, section, activeQuery) { Repo.state(chatId, section, activeQuery) }
+    val sorted = remember(st.items.size, sort) {
+        val cmp: Comparator<Media> = when (sort) {
+            "old" -> compareBy { it.date.toLong() }
+            "size" -> compareByDescending { it.size }
+            "name" -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+            "duration" -> compareByDescending { it.duration }
+            else -> compareByDescending { it.date.toLong() }
+        }
+        st.items.sortedWith(cmp)
+    }
     // Low Data / Extreme Low Data playback suspends thumbnail/preview work; Wi-Fi-only prefetch blocks it on mobile data.
     val liveMode = if (StreamingRuntime.playbackActive) StreamingRuntime.activeMode else Prefs.effectiveMode()
     val lowDataSuspends = liveMode != StreamingMode.NORMAL &&
@@ -113,6 +139,20 @@ fun FilesScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                 },
                 actions = {
+                    IconButton(onClick = { sortMenu = true }) {
+                        Icon(Icons.Filled.Sort, "Sort")
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        sortOptions.forEach { (key, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                trailingIcon = {
+                                    if (sort == key) Icon(Icons.Filled.Check, null)
+                                },
+                                onClick = { sort = key; sortMenu = false },
+                            )
+                        }
+                    }
                     IconButton(onClick = { grid = !grid }) {
                         Text(if (grid) "☰" else "▦", fontSize = 20.sp)
                     }
@@ -138,9 +178,9 @@ fun FilesScreen(
                 }
             }
             if (grid) {
-                MediaGrid(st, ::more, thumbsOn, onDownload) { onOpen(it, st.items.toList()) }
+                MediaGrid(st, sorted, ::more, thumbsOn, onDownload) { onOpen(it, sorted) }
             } else {
-                MediaList(st, ::more, thumbsOn, onDownload) { onOpen(it, st.items.toList()) }
+                MediaList(st, sorted, ::more, thumbsOn, onDownload) { onOpen(it, sorted) }
             }
         }
     }
@@ -162,7 +202,7 @@ internal fun Footer(st: ListState, onMore: () -> Unit) {
 }
 
 @Composable
-internal fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
+internal fun MediaGrid(st: ListState, items: List<Media>, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyGridState()
     val nearEnd by remember {
         derivedStateOf {
@@ -180,7 +220,7 @@ internal fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        items(st.items, key = { it.key }) { m ->
+        items(items, key = { it.key }) { m ->
             Box(
                 Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick(m) }
             ) {
@@ -212,7 +252,7 @@ internal fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
 }
 
 @Composable
-internal fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
+internal fun MediaList(st: ListState, items: List<Media>, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyListState()
     val nearEnd by remember {
         derivedStateOf {
@@ -223,7 +263,7 @@ internal fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onD
     LaunchedEffect(nearEnd, st.items.size) { if (nearEnd) onMore() }
 
     LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-        items(st.items, key = { it.key }) { m ->
+        items(items, key = { it.key }) { m ->
             Row(
                 Modifier.fillMaxWidth().clickable { onClick(m) }.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
