@@ -42,10 +42,15 @@ Local build: put `TG_API_ID=...` and `TG_API_HASH=...` in `local.properties`, co
 
 ```
 app/src/main/java/com/airbooks/app/
-  tg/Tg.kt            TDLib wrapper: auth, chats, file search, downloads
+  tg/Tg.kt            TDLib wrapper: auth, chats, messages, file search, downloads
   tg/TdDataSource.kt  ExoPlayer ↔ TDLib windowed streaming
   tg/Media.kt         models + in-memory file-list cache
-  ui/                 Login, Chats, Files (tabs/grid/search), Player, Image, PDF, Settings
+  tg/Messages.kt      pure chat-message model + list structuring (unit-tested)
+  tg/MsgMapper.kt     TDLib message → Msg (every content type, degrades safely)
+  tg/ChatRepo.kt      per-conversation cache, paged history, live updates
+  ui/                 Login, Chats, Conversation, Search, Files, Player, Image, PDF, Settings
+  MainActivity.kt     five destinations (bar on phones / rail on wide screens) + detail stack
+  NavCodec.kt         pure navigation persistence across rotation and process death
 ```
 
 ## Known limits / ideas
@@ -58,7 +63,20 @@ app/src/main/java/com/airbooks/app/
 * Playback depends on the phone's codecs (e.g. some MKV/HEVC/AC3 files); no transcoding.
 * Archived chats and chat folders are listed; global message search, unread badges and a
   Continue-watching rail are included. EPUB reader not included.
+* **Chats are real conversations**: send text and attachments, receive live, page through history,
+  reply, edit/delete your own messages, react, see read ticks and presence. See MESSAGING.md.
 * Image viewer supports pinch-zoom/pan and double-tap zoom.
+
+## Chats, messaging & navigation
+Real Telegram conversations over the same on-device TDLib session — no second login, no backend,
+no placeholder content. Paged history (40 messages at a time, LRU-bounded cache), live updates,
+sending text and attachments, replies, edits, deletions, reactions, read receipts, presence,
+drafts, pinned/muted/archived chats, folders and global search. Navigation is five destinations
+with a bottom bar on phones and a rail on wide screens; the player adds a gesture layer
+(double-tap seek, brightness/volume swipes, swipe-to-seek preview, control lock), aspect-ratio
+cycling, split audio/subtitle pickers, a sleep timer with "end of this item" and a playback-info
+dialog that reports only real values. Design, layering and honest limits: **MESSAGING.md**
+(chats) and **STREAMING.md §6** (player/gestures).
 
 ## Downloads & speed programme
 Managed downloads (queue, concurrency profiles, pause/resume/retry, background `dataSync`

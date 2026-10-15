@@ -243,3 +243,74 @@ for 10 s and recover, background an audio track, kill and relaunch to confirm re
 Build verification: GitHub Actions "Build APK" on the latest commit of this branch — unit tests
 + `:app:assembleRelease` green, artifact `AirGram-apk` (~32 MB). Launcher label is `AirGram`
 (manifest unchanged), applicationId unchanged (`com.airbooks.app`).
+
+## 6. Player controls, gestures and lock
+
+Everything that already worked is still there: the three streaming modes as chips, the
+YouTube-style played/loaded/unloaded timeline fed by real Media3 `bufferedPosition` **and** the
+real TDLib contiguous prefix (`StreamingRuntime.loadedPrefix`), pause-to-buffer status lines,
+background audio through the media session, position restore and the Continue rail.
+
+### Gesture layer
+
+Pointer handling is split from playback logic on purpose:
+
+* `ui/GestureMath.kt` (pure, no Compose/Android/player) decides *what a gesture means* — screen
+  zones, drag→brightness/volume/seek mapping, seek clamping, option cycles, buffered percentage.
+  `GestureAxisLock` is the state machine: the first movement past 1.5× the touch slop locks the
+  gesture to the dominant axis and it cannot flip mid-drag.
+* `GestureLayer` (in `PlayerScreen.kt`) only runs the pointer input and emits a sealed
+  `PlayerGesture` intent; `handleGesture` in the screen executes it against the player.
+
+Two detectors share one node: the drag machine runs first and **consumes** movement as soon as it
+locks, which cancels the tap detector — so a swipe never also counts as a tap, and a tap never
+triggers a seek.
+
+| Gesture | Effect |
+| --- | --- |
+| Single tap | Show/hide controls (unchanged) |
+| Double tap, left / right band (outer 35%) | −10 s / +10 s |
+| Double tap, centre | Play / pause |
+| Vertical swipe, left band | Window brightness (never the persistent system value) |
+| Vertical swipe, right band | Media stream volume only |
+| Vertical swipe, centre | Nothing — no accidental effect |
+| Horizontal swipe | Live seek preview (`» 12:34`), committed on release |
+| Lock enabled | Gesture layer is not composed at all |
+
+Brightness is `window.attributes.screenBrightness`, so it applies to this activity only and is
+restored to `-1` (follow the system) in `onDispose`. Volume uses `AudioManager.STREAM_MUSIC`
+exclusively. **Audio playback gets no gesture layer**: there is no picture to dim, its controls are
+always visible, and a swipe there would compete with them — the required "no brightness gesture for
+audio" is met by not installing the layer rather than by special-casing it.
+
+### Controls
+
+* **Top row**: back, truncated title (tap → full-name dialog), live info line (buffered seconds,
+  item size, measured throughput, mode), lock, and a More menu.
+* **Scrollable action row**: the three streaming modes, rotate, PiP, aspect ratio, sleep, speed,
+  audio tracks, subtitles. One horizontally scrollable row keeps every control reachable on a
+  narrow phone instead of squeezing the title.
+* **More menu** offers only options that mean something for the current item: aspect ratio
+  (Fit → Crop → Stretch, applied through `PlayerView.resizeMode`), rotate, picture-in-picture,
+  subtitles on/off when the source has a text track, lock controls, full name, playback info.
+* **Bottom panel**: play/pause, −10 s, +10 s, previous/next (when the queue has more than one
+  item), position / total, the three-track timeline, pause-prebuffer status, a speed shortcut,
+  rotate and lock.
+* **Track pickers are split by real track type** — `C.TRACK_TYPE_AUDIO` for audio and
+  `C.TRACK_TYPE_TEXT` for subtitles — instead of one mixed list, and subtitle off uses
+  `setTrackTypeDisabled`, so it genuinely disables rendering.
+* **Sleep timer** keeps the delay behaviour and adds real presets plus "End of this item", which
+  pauses on `onMediaItemTransition` rather than letting the queue continue.
+* **Playback info** reports only real values: player path, streaming mode, `videoSize` when the
+  player reports one, bitrate derived from real message size/duration, measured throughput from the
+  estimator, buffered seconds and share, the TDLib downloaded window, rebuffer count, position.
+  Anything unavailable is shown as `unknown`, never estimated.
+* **Non-seekable sources**: when the player reports no duration, ±10 s and the seek bar are
+  disabled, the total reads `--:--`, a line explains why, and `GestureMath.clampSeek` returns the
+  current position instead of guessing a range.
+
+`GestureMathTest` covers the zones and their edges, brightness/volume direction and clamping,
+proportional and capped swipe seeking, double-tap zones, unknown-duration seeks, axis locking
+(including that a locked gesture cannot flip and that an exactly diagonal drag stays undecided),
+the speed and aspect cycles, and the buffered-percentage/unknown rules. Gesture *feel* on a real
+screen — slop, overscroll, lock ergonomics — needs a device and is not verified in CI.

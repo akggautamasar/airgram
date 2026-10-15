@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
  */
 sealed interface Screen {
     data object Chats : Screen
-    data object Media : Screen
+    /** Global media library (Videos/Audio/Docs/Photos across every chat). */
+    data object Library : Screen
     data object Search : Screen
     data object Downloads : Screen
     data object Settings : Screen
