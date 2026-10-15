@@ -46,6 +46,16 @@ object GestureMath {
         else -> GestureZone.CENTER
     }
 
+    /**
+     * Single-tap policy (acceptance §5.E / §10): while the controls are hidden the first tap only
+     * reveals them; once they are visible a tap in the centre zone toggles play/pause and a tap on
+     * an edge band hides the controls again. Pure so the rule is unit-testable.
+     */
+    fun centerTapTogglesPlay(controlsVisible: Boolean, xFraction: Float): Boolean =
+        controlsVisible &&
+            xFraction > EDGE_FRACTION &&
+            xFraction < 1f - EDGE_FRACTION
+
     /** Audio has no picture, so a brightness gesture there would be meaningless. */
     fun allowsBrightness(isAudio: Boolean): Boolean = !isAudio
 

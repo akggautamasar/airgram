@@ -16,7 +16,7 @@ ui/ChatsScreen.kt   chat list (Telegram rows, grid option, folders, archive, fil
 ui/ConversationScreen.kt  one conversation: bubbles, composer, reactions, pagination
 ui/SearchScreen.kt  global message/media search + matching chats
 ui/MediaSectionScreen.kt  global Videos/Audio/Docs/Photos (all chats)
-MainActivity.kt     five destinations + pushed detail stack
+MainActivity.kt     Videos/Audio/Docs/Photos/Chats bar + pushed detail stack
 NavCodec.kt         pure codec that persists navigation across rotation/process death
 ```
 
@@ -144,10 +144,13 @@ Auto-thumbnails / Low-Data / Wi-Fi-only-prefetch gates.
 
 ## Navigation
 
-Five destinations — **Chats, Media, Search, Downloads, Settings** — with a `NavigationBar` on
-phones and a `NavigationRail` at `screenWidthDp >= 600` (tablets, foldables, desktop). Conversations,
-per-chat file browsers and viewers are pushed onto a detail stack, so the bottom bar hides while you
-read a chat and Back returns through the stack exactly as before.
+Five destinations — **Videos, Audio, Docs, Photos, Chats** — with a `NavigationBar` on phones and a
+`NavigationRail` at `screenWidthDp >= 600` (tablets, foldables, desktop). The four media sections
+are the original file browser's sections promoted to first-class navigation; Chats sits beside
+them. Global search, Downloads and Settings are pushed screens reachable from every media
+section's overflow menu and the Chats account button, so nothing that used to be one tap away is
+lost. Conversations, per-chat file browsers and viewers are pushed onto the same detail stack, so
+the bottom bar hides while you read a chat and Back returns through the stack exactly as before.
 
 `NavCodec` serialises destination + stack to one delimited string for `rememberSaveable`, so
 rotation and process death restore the same tab and the same open conversation. Two honest limits,

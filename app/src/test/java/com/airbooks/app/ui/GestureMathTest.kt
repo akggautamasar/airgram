@@ -229,4 +229,24 @@ class GestureMathTest {
         assertTrue(GestureMath.SLEEP_MINUTES.all { it in 1..180 })
         assertTrue(GestureMath.SLEEP_MINUTES.contains(15))
     }
+
+    // ─────────────────────────── single-tap policy ───────────────────────────
+
+    @Test
+    fun `first tap only reveals controls, centre tap then toggles play`() {
+        // Controls hidden: any tap reveals them — never an accidental play/pause (§5.E).
+        assertFalse(GestureMath.centerTapTogglesPlay(false, 0.5f))
+        assertFalse(GestureMath.centerTapTogglesPlay(false, 0.05f))
+        assertFalse(GestureMath.centerTapTogglesPlay(false, 0.95f))
+        // Controls visible: centre toggles play/pause…
+        assertTrue(GestureMath.centerTapTogglesPlay(true, 0.5f))
+        assertTrue(GestureMath.centerTapTogglesPlay(true, GestureMath.EDGE_FRACTION + 0.001f))
+        assertTrue(GestureMath.centerTapTogglesPlay(true, 1f - GestureMath.EDGE_FRACTION - 0.001f))
+        // …while the edge bands (the double-tap seek zones) hide the controls instead, so a
+        // single tap there can never be confused with a seek double-tap.
+        assertFalse(GestureMath.centerTapTogglesPlay(true, GestureMath.EDGE_FRACTION))
+        assertFalse(GestureMath.centerTapTogglesPlay(true, 0.1f))
+        assertFalse(GestureMath.centerTapTogglesPlay(true, 0.95f))
+        assertFalse(GestureMath.centerTapTogglesPlay(true, 1f - GestureMath.EDGE_FRACTION))
+    }
 }

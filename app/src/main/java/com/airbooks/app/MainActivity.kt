@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Chat
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -44,6 +46,7 @@ import com.airbooks.app.download.DownloadManager
 import com.airbooks.app.tg.ChatRow
 import com.airbooks.app.tg.Kind
 import com.airbooks.app.tg.Media
+import com.airbooks.app.tg.Section
 import com.airbooks.app.tg.Tg
 import com.airbooks.app.ui.AirTheme
 import com.airbooks.app.ui.ChatsScreen
@@ -74,14 +77,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Navigation model: five top-level destinations plus a stack of pushed detail screens.
- * Destinations keep the app's identity (Chats / media library / search / downloads / settings);
- * the stack carries conversations, chat file browsers and viewers, exactly as before.
+ * Navigation model: five top-level destinations (Videos, Audio, Docs, Photos, Chats — the four
+ * media sections of the original browser plus Chats as a first-class destination) and a stack of
+ * pushed screens. Search, downloads and settings live on the stack, reachable from the media
+ * top bars and the Chats account button, so no existing screen is lost.
  */
 sealed interface Screen {
-    data object Chats : Screen
-    /** Global media library (Videos/Audio/Docs/Photos across every chat). */
-    data object Library : Screen
     data object Search : Screen
     data object Downloads : Screen
     data object Settings : Screen
@@ -176,11 +177,11 @@ fun MainNav() {
     }
 
     val dests = listOf(
+        Dest("Videos", Icons.Filled.VideoLibrary),
+        Dest("Audio", Icons.Filled.Audiotrack),
+        Dest("Docs", Icons.Filled.Description),
+        Dest("Photos", Icons.Filled.PhotoLibrary),
         Dest("Chats", Icons.Filled.Chat),
-        Dest("Media", Icons.Filled.VideoLibrary),
-        Dest("Search", Icons.Filled.Search),
-        Dest("Downloads", Icons.Filled.Download),
-        Dest("Settings", Icons.Filled.Settings),
     )
     // Compact phones get a bottom bar; wider screens (tablets, foldables, desktop) get a rail.
     val wide = LocalConfiguration.current.screenWidthDp >= 600
@@ -198,13 +199,13 @@ fun MainNav() {
                 }
             }
             Box(Modifier.weight(1f).fillMaxHeight()) {
-                DestContent(nav.dest, ::push, ::gotoDest, ::openMedia)
+                DestContent(nav.dest, ::push, ::openMedia)
             }
         }
     } else {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxSize()) {
-                DestContent(nav.dest, ::push, ::gotoDest, ::openMedia)
+                DestContent(nav.dest, ::push, ::openMedia)
             }
             NavigationBar {
                 dests.forEachIndexed { i, d ->
@@ -225,26 +226,24 @@ fun MainNav() {
 private fun DestContent(
     dest: Int,
     push: (Screen) -> Unit,
-    gotoDest: (Int) -> Unit,
     openMedia: (Media, List<Media>) -> Unit,
 ) {
     when (dest) {
-        0 -> ChatsScreen(
+        4 -> ChatsScreen(
             onOpen = { push(Screen.Conversation(it.id, it.title)) },
             onOpenFiles = { push(Screen.Files(it.id, it.title)) },
             onOpenMedia = { m -> openMedia(m, listOf(m)) },
-            onAccount = { gotoDest(4) },
+            onAccount = { push(Screen.Settings) },
         )
-        1 -> MediaSectionScreen(
+        // Destinations 0..3 are the four media sections, in the order the bar lists them.
+        else -> MediaSectionScreen(
+            section = Section.values()[dest.coerceIn(0, 3)],
             onOpen = { m, all -> openMedia(m, all) },
             onDownload = { DownloadManager.enqueue(it) },
+            onOpenSearch = { push(Screen.Search) },
+            onOpenDownloads = { push(Screen.Downloads) },
+            onOpenSettings = { push(Screen.Settings) },
         )
-        2 -> SearchScreen(
-            onOpenChat = { push(Screen.Conversation(it.id, it.title)) },
-            onOpenMedia = { m, all -> openMedia(m, all) },
-        )
-        3 -> DownloadsScreen()
-        else -> SettingsScreen()
     }
 }
 
@@ -279,6 +278,13 @@ private fun Detail(
             onDownload = { DownloadManager.enqueue(it) },
             onOpen = { m, all -> openMedia(m, all) },
         )
+        Screen.Search -> SearchScreen(
+            onOpenChat = { push(Screen.Conversation(it.id, it.title)) },
+            onOpenMedia = { m, all -> openMedia(m, all) },
+            onBack = pop,
+        )
+        Screen.Downloads -> DownloadsScreen(onBack = pop)
+        Screen.Settings -> SettingsScreen(onBack = pop)
         is Screen.Play -> PlayerScreen(s.item, s.queue, s.chatTitle, onBack = pop)
         is Screen.Pdf -> PdfScreen(s.item, onBack = pop)
         is Screen.Other -> OtherScreen(s.item, onBack = pop)

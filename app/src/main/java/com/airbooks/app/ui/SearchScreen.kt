@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -48,14 +50,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Global search destination: matching conversations plus real cross-chat message/media results
- * from Telegram's own `searchMessages` (paged — nothing is loaded up front).
+ * Global search screen (pushed from the media sections): matching conversations plus real
+ * cross-chat message/media results from Telegram's own `searchMessages` (paged — nothing is
+ * loaded up front).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     onOpenChat: (ChatRow) -> Unit,
     onOpenMedia: (Media, List<Media>) -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     var q by rememberSaveable { mutableStateOf("") }
     var items by remember { mutableStateOf<List<Media>>(emptyList()) }
@@ -95,20 +99,27 @@ fun SearchScreen(
 
     Scaffold(
         topBar = {
-            TextField(
-                value = q, onValueChange = { q = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                placeholder = { Text("Search messages and chats") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
-                singleLine = true,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                ),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                    }
+                }
+                TextField(
+                    value = q, onValueChange = { q = it },
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp),
+                    placeholder = { Text("Search messages and chats") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    singleLine = true,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
+                )
+            }
         },
     ) { pad ->
         Column(Modifier.padding(pad)) {

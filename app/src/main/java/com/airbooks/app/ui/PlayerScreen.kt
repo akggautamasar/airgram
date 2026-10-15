@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -26,16 +28,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Info
@@ -52,6 +59,8 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -76,6 +85,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -172,7 +182,11 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
     /** media3 AspectRatioFrameLayout resize mode — fit / crop / stretch. */
     var resizeMode by remember { mutableIntStateOf(GestureMath.RESIZE_MODES[0]) }
     /** Transient gesture read-out (brightness, volume, seek preview). */
-    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedback by remember { mutableStateOf<Pill?>(null) }
+    /** Transient centred play/pause icon after a tap or double-tap (fades out, §5.E). */
+    var pulseIcon by remember { mutableStateOf<ImageVector?>(null) }
+    var pulseOn by remember { mutableStateOf(false) }
+    var pulseSeq by remember { mutableIntStateOf(0) }
     var infoOpen by remember { mutableStateOf(false) }
     var titleOpen by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
@@ -189,6 +203,13 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         if (feedback != null) {
             delay(900)
             feedback = null
+        }
+    }
+    val pulseAlpha by animateFloatAsState(if (pulseOn) 1f else 0f, tween(320), label = "pulse")
+    LaunchedEffect(pulseSeq) {
+        if (pulseSeq > 0) {
+            delay(420)
+            pulseOn = false
         }
     }
 
@@ -235,23 +256,47 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         controller?.setPlaybackSpeed(f)
     }
 
+    /** Real play/pause flip with the transient centred icon the gesture spec asks for. */
+    fun togglePlayPause() {
+        val playing = controller?.isPlaying == true
+        controller?.let { if (playing) it.pause() else it.play() }
+        pulseIcon = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow
+        pulseOn = true
+        pulseSeq++
+    }
+
     /** Executes one gesture. Pointer handling never touches playback state directly. */
     fun handleGesture(g: PlayerGesture) {
         when (g) {
-            PlayerGesture.ToggleControls -> controlsVisible = !controlsVisible
-            PlayerGesture.PlayPause -> controller?.let { if (it.isPlaying) it.pause() else it.play() }
+            // §5.E: first interaction while the controls are hidden only reveals them; with the
+            // controls up, a centre tap toggles play/pause and an edge tap hides them again.
+            is PlayerGesture.Tap ->
+                if (GestureMath.centerTapTogglesPlay(controlsVisible, g.xFraction)) {
+                    togglePlayPause()
+                } else {
+                    controlsVisible = !controlsVisible
+                }
+            PlayerGesture.PlayPause -> togglePlayPause()
             is PlayerGesture.SeekStep -> {
                 seekBy(g.seconds)
-                feedback = (if (g.seconds > 0) "+" else "") + "${g.seconds}s"
+                feedback = Pill(
+                    if (g.seconds > 0) Icons.Filled.Forward10 else Icons.Filled.Replay10,
+                    if (g.seconds > 0) "+${g.seconds} s" else "${g.seconds} s",
+                    null,
+                )
             }
             is PlayerGesture.SeekPreview -> {
                 val c = controller ?: return
                 if (c.duration <= 0) {
-                    feedback = "Not seekable"
+                    feedback = Pill(Icons.Filled.ErrorOutline, "Not seekable", null)
                     return
                 }
                 val target = GestureMath.clampSeek(c.currentPosition, g.seconds, c.duration)
-                feedback = (if (g.seconds >= 0) "\u00bb " else "\u00ab ") + fmtDur((target / 1000).toInt())
+                feedback = Pill(
+                    Icons.Filled.Schedule,
+                    (if (g.seconds >= 0) "\u00bb " else "\u00ab ") + fmtDur((target / 1000).toInt()),
+                    null,
+                )
             }
             is PlayerGesture.SeekCommit -> {
                 seekBy(g.seconds)
@@ -259,11 +304,19 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
             is PlayerGesture.Brightness -> {
                 setBrightness(g.value)
-                feedback = "\u2600 ${(g.value * 100).toInt()}%"
+                feedback = Pill(
+                    Icons.Filled.BrightnessHigh,
+                    "Brightness ${(g.value * 100).toInt()}%",
+                    g.value,
+                )
             }
             is PlayerGesture.Volume -> {
                 setVolume(g.value)
-                feedback = "\ud83d\udd0a ${g.value}/${g.max}"
+                feedback = Pill(
+                    if (g.value == 0) Icons.Filled.VolumeOff else Icons.Filled.VolumeUp,
+                    if (g.value == 0) "Muted" else "Volume ${g.value}/${g.max}",
+                    if (g.max > 0) g.value.toFloat() / g.max else null,
+                )
             }
         }
     }
@@ -519,8 +572,9 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             )
         }
 
-        // Video gestures: tap toggles the controls, double-tap seeks or plays, vertical swipes on
-        // the edges drive brightness/volume and a horizontal swipe seeks. Audio keeps its
+        // Video gestures: a single tap reveals the controls (or, once visible, toggles play/pause
+        // in the centre and hides them at the edges), double-tap seeks or plays, vertical swipes
+        // on the edges drive brightness/volume and a horizontal swipe seeks. Audio keeps its
         // always-on controls and no brightness gesture (there is no picture to dim).
         if (!isAudio && !locked) {
             GestureLayer(::brightnessNow, ::volumeNow, ::handleGesture)
@@ -895,17 +949,55 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
         }
 
-        // Gesture read-out: transient, and the only overlay a swipe produces.
+        // Gesture read-out: transient icon + text + level bar, the only overlay a swipe produces.
         feedback?.let { f ->
             Surface(
                 Modifier.align(Alignment.Center),
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xCC000000),
             ) {
-                Text(
-                    f, color = Color.White, fontSize = 16.sp,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                )
+                Row(
+                    Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    f.icon?.let {
+                        Icon(it, null, Modifier.size(22.dp), tint = Color.White)
+                        Spacer(Modifier.size(10.dp))
+                    }
+                    Column {
+                        Text(f.text, color = Color.White, fontSize = 16.sp)
+                        f.level?.let { lv ->
+                            Spacer(Modifier.size(6.dp))
+                            Box(
+                                Modifier
+                                    .size(width = 96.dp, height = 4.dp)
+                                    .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(2.dp)),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .fillMaxHeight()
+                                        .fillMaxWidth(lv.coerceIn(0f, 1f))
+                                        .background(Color.White, RoundedCornerShape(2.dp)),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Centred play/pause pulse from a tap or double-tap; fades away on its own.
+        val pIcon = pulseIcon
+        if (pIcon != null && pulseAlpha > 0.01f) {
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(84.dp)
+                    .alpha(pulseAlpha)
+                    .background(Color.Black.copy(alpha = 0.38f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(pIcon, null, Modifier.size(44.dp), tint = Color.White)
             }
         }
 
@@ -1072,12 +1164,16 @@ private fun android.app.Activity.enterPip() {
     }
 }
 
+/** Transient gesture read-out: optional icon, text, and optional 0..1 level for the bar. */
+private data class Pill(val icon: ImageVector?, val text: String, val level: Float?)
+
 /**
  * One gesture the player should execute. The layer below only decides *which* gesture happened —
  * all playback effects stay in [PlayerScreen], which keeps this testable and side-effect free.
  */
 private sealed interface PlayerGesture {
-    data object ToggleControls : PlayerGesture
+    /** Single tap; x as a fraction of the player width so the screen can apply the tap policy. */
+    data class Tap(val xFraction: Float) : PlayerGesture
     data object PlayPause : PlayerGesture
     data class SeekStep(val seconds: Int) : PlayerGesture
     data class SeekPreview(val seconds: Int) : PlayerGesture
@@ -1160,7 +1256,7 @@ private fun GestureLayer(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { onGesture(PlayerGesture.ToggleControls) },
+                    onTap = { off -> onGesture(PlayerGesture.Tap(off.x / size.width.toFloat())) },
                     onDoubleTap = { off ->
                         val s = GestureMath.doubleTapSeconds(off.x, size.width.toFloat())
                         onGesture(

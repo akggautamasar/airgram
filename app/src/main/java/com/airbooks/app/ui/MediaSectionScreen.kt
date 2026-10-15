@@ -4,15 +4,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -40,7 +45,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Top-level media library across **every** chat: the Videos / Audio / Docs / Photos destinations.
+ * One top-level media section across **every** chat. Videos / Audio / Docs / Photos are main
+ * navigation destinations (the bottom bar / rail picks the section), so this screen renders
+ * exactly one [Section] instead of hosting its own tabs.
  *
  * Same look, filters and download behaviour as [FilesScreen] (it reuses its grid, list and footer),
  * but backed by a global Telegram media search instead of a per-chat one, so no chat has to be
@@ -49,12 +56,15 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaSectionScreen(
-    initial: Section = Section.VIDEOS,
+    section: Section,
     onOpen: (Media, List<Media>) -> Unit,
     onDownload: (Media) -> Unit = {},
+    onOpenSearch: () -> Unit = {},
+    onOpenDownloads: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
-    var section by rememberSaveable { mutableStateOf(initial) }
     var grid by rememberSaveable { mutableStateOf(true) }
+    var menu by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var activeQuery by rememberSaveable { mutableStateOf("") }
@@ -99,7 +109,10 @@ fun MediaSectionScreen(
                 },
                 actions = {
                     IconButton(onClick = { grid = !grid }) {
-                        Text(if (grid) "☰" else "▦", fontSize = 20.sp)
+                        Icon(
+                            if (grid) Icons.Filled.ViewList else Icons.Filled.GridView,
+                            if (grid) "Switch to list view" else "Switch to grid view",
+                        )
                     }
                     IconButton(onClick = { st.reset(); more() }) {
                         Icon(Icons.Filled.Refresh, "Refresh")
@@ -108,7 +121,30 @@ fun MediaSectionScreen(
                         searching = !searching
                         if (!searching) query = ""
                     }) {
-                        Icon(if (searching) Icons.Filled.Close else Icons.Filled.Search, "Search")
+                        Icon(
+                            if (searching) Icons.Filled.Close else Icons.Filled.Search,
+                            if (searching) "Close search" else "Search ${section.label.lowercase()}",
+                        )
+                    }
+                    IconButton(onClick = { menu = true }) {
+                        Icon(Icons.Filled.MoreVert, "More options")
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Search everything") },
+                            leadingIcon = { Icon(Icons.Filled.Search, null) },
+                            onClick = { menu = false; onOpenSearch() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Downloads") },
+                            leadingIcon = { Icon(Icons.Filled.Download, null) },
+                            onClick = { menu = false; onOpenDownloads() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                            onClick = { menu = false; onOpenSettings() },
+                        )
                     }
                 },
             )
@@ -116,11 +152,6 @@ fun MediaSectionScreen(
     ) { pad ->
         Column(Modifier.padding(pad)) {
             ConnectionBanner()
-            TabRow(selectedTabIndex = section.ordinal) {
-                Section.values().forEach { s ->
-                    Tab(selected = section == s, onClick = { section = s }, text = { Text(s.label) })
-                }
-            }
             if (grid) {
                 MediaGrid(st, ::more, thumbsOn, onDownload) { onOpen(it, st.items.toList()) }
             } else {

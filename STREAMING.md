@@ -268,14 +268,20 @@ triggers a seek.
 
 | Gesture | Effect |
 | --- | --- |
-| Single tap | Show/hide controls (unchanged) |
+| Single tap, controls hidden | Reveals the controls — the first interaction never toggles playback |
+| Single tap, centre (controls visible) | Play / pause, with a transient centred icon that fades out |
+| Single tap, edge bands (controls visible) | Hides the controls again |
 | Double tap, left / right band (outer 35%) | −10 s / +10 s |
 | Double tap, centre | Play / pause |
 | Vertical swipe, left band | Window brightness (never the persistent system value) |
 | Vertical swipe, right band | Media stream volume only |
 | Vertical swipe, centre | Nothing — no accidental effect |
 | Horizontal swipe | Live seek preview (`» 12:34`), committed on release |
-| Lock enabled | Gesture layer is not composed at all |
+| Lock enabled | Gesture layer is not composed at all; a visible unlock button remains |
+
+Swipe and seek read-outs are a transient overlay with a real icon (brightness, volume — including
+a muted state, ±10 s, seek target), text and, for brightness/volume, a level bar; nothing is
+reported that the gesture did not actually change.
 
 Brightness is `window.attributes.screenBrightness`, so it applies to this activity only and is
 restored to `-1` (follow the system) in `onDispose`. Volume uses `AudioManager.STREAM_MUSIC`
