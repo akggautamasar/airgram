@@ -903,9 +903,9 @@ object Tg {
      */
     private fun toLinkMedia(m: TdApi.Message): Media? {
         val text: String
-        val page: TdApi.WebPage?
+        val page: TdApi.LinkPreview?
         when (val c = m.content) {
-            is TdApi.MessageText -> { text = c.text?.text.orEmpty(); page = c.webPage }
+            is TdApi.MessageText -> { text = c.text?.text.orEmpty(); page = c.linkPreview }
             is TdApi.MessagePhoto -> { text = c.caption?.text.orEmpty(); page = null }
             is TdApi.MessageVideo -> { text = c.caption?.text.orEmpty(); page = null }
             is TdApi.MessageAnimation -> { text = c.caption?.text.orEmpty(); page = null }
