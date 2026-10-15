@@ -886,8 +886,8 @@ object Tg {
                 Media(
                     m.chatId, m.id, Kind.VIDEO,
                     nameOf(a.fileName, c.caption.text, "GIF", m.date), a.mimeType,
-                    maxOf(a.file.size, a.file.expectedSize), a.duration,
-                    seen(a.file), a.file.id, seen(a.thumbnail?.file),
+                    maxOf(a.animation.size, a.animation.expectedSize), a.duration,
+                    seen(a.animation), a.animation.id, seen(a.thumbnail?.file),
                     a.minithumbnail?.data, m.date, c.caption.text,
                 )
             }
