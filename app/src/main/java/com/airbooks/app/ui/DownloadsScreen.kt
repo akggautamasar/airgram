@@ -44,7 +44,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadsScreen(onBack: () -> Unit) {
+fun DownloadsScreen(onBack: (() -> Unit)? = null) {
     val jobs by DownloadManager.ui.collectAsState()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -60,7 +60,9 @@ fun DownloadsScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Downloads") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                    }
                 },
             )
         },
@@ -204,7 +206,8 @@ private fun JobRow(j: DownloadScheduler.DownloadJob) {
     }
 }
 
-private fun openOrShare(ctx: android.content.Context, f: File, name: String, share: Boolean) {
+/** Opens (or shares) a local file with the system viewer for its type — shared by Downloads and Chats. */
+internal fun openOrShare(ctx: android.content.Context, f: File, name: String, share: Boolean) {
     val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
     val mime = android.webkit.MimeTypeMap.getSingleton()
         .getMimeTypeFromExtension(name.substringAfterLast('.', "bin")) ?: "*/*"

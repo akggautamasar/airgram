@@ -2,6 +2,8 @@ package com.airbooks.app.ui
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Context
+import android.media.AudioManager
 import android.content.pm.PackageManager
 import android.os.Build
 import android.content.pm.ActivityInfo
@@ -10,6 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,10 +35,24 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -41,6 +61,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +79,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -139,11 +161,129 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
     var landscape by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var sleepMenu by remember { mutableStateOf(false) }
-    var trackMenu by remember { mutableStateOf(false) }
     var trackLabels by remember { mutableStateOf<List<TrackEntry>>(emptyList()) }
     var warnDismissed by remember { mutableStateOf(false) }
     val metered = remember { Tg.isMetered() }
     var wasReady by remember { mutableStateOf(false) }
+
+    // ── Upgraded player controls ──
+    /** Locks every gesture and hides the controls, so the screen can be wiped/held safely. */
+    var locked by remember { mutableStateOf(false) }
+    /** media3 AspectRatioFrameLayout resize mode — fit / crop / stretch. */
+    var resizeMode by remember { mutableIntStateOf(GestureMath.RESIZE_MODES[0]) }
+    /** Transient gesture read-out (brightness, volume, seek preview). */
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var infoOpen by remember { mutableStateOf(false) }
+    var titleOpen by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
+    var audioMenu by remember { mutableStateOf(false) }
+    var subsMenu by remember { mutableStateOf(false) }
+    /** Sleep timer variant: stop when this item finishes instead of after a fixed delay. */
+    var sleepEndOfItem by remember { mutableStateOf(false) }
+    var videoW by remember { mutableIntStateOf(0) }
+    var videoH by remember { mutableIntStateOf(0) }
+    var subsOn by remember { mutableStateOf(true) }
+
+    val audioMgr = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    LaunchedEffect(feedback) {
+        if (feedback != null) {
+            delay(900)
+            feedback = null
+        }
+    }
+
+    /**
+     * Brightness is the *activity window's* value, never the persistent system setting: it applies
+     * to this player only and is restored when the screen leaves. `-1` means "follow the system".
+     */
+    fun brightnessNow(): Float {
+        val b = activity?.window?.attributes?.screenBrightness ?: -1f
+        return if (b < 0f) 0.5f else b
+    }
+
+    fun setBrightness(f: Float) {
+        val w = activity?.window ?: return
+        val lp = w.attributes
+        lp.screenBrightness = f.coerceIn(0.01f, 1f)
+        w.attributes = lp
+    }
+
+    fun volumeNow(): Pair<Int, Int> =
+        audioMgr.getStreamVolume(AudioManager.STREAM_MUSIC) to
+            audioMgr.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+
+    fun setVolume(v: Int) {
+        // Media stream only: ring/alarm/notification volumes are never touched.
+        runCatching { audioMgr.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0) }
+    }
+
+    /** Relative seek against the real duration; a no-op when the source reports none. */
+    fun seekBy(seconds: Int) {
+        val c = controller ?: return
+        val target = GestureMath.clampSeek(c.currentPosition, seconds, c.duration)
+        if (target != c.currentPosition) c.seekTo(target)
+    }
+
+    fun cycleSpeed() {
+        val next = GestureMath.nextSpeed(Prefs.playbackSpeed)
+        Prefs.updatePlaybackSpeed(next)
+        controller?.setPlaybackSpeed(next)
+    }
+
+    fun setSpeed(f: Float) {
+        Prefs.updatePlaybackSpeed(f)
+        controller?.setPlaybackSpeed(f)
+    }
+
+    /** Executes one gesture. Pointer handling never touches playback state directly. */
+    fun handleGesture(g: PlayerGesture) {
+        when (g) {
+            PlayerGesture.ToggleControls -> controlsVisible = !controlsVisible
+            PlayerGesture.PlayPause -> controller?.let { if (it.isPlaying) it.pause() else it.play() }
+            is PlayerGesture.SeekStep -> {
+                seekBy(g.seconds)
+                feedback = (if (g.seconds > 0) "+" else "") + "${g.seconds}s"
+            }
+            is PlayerGesture.SeekPreview -> {
+                val c = controller ?: return
+                if (c.duration <= 0) {
+                    feedback = "Not seekable"
+                    return
+                }
+                val target = GestureMath.clampSeek(c.currentPosition, g.seconds, c.duration)
+                feedback = (if (g.seconds >= 0) "\u00bb " else "\u00ab ") + fmtDur((target / 1000).toInt())
+            }
+            is PlayerGesture.SeekCommit -> {
+                seekBy(g.seconds)
+                feedback = null
+            }
+            is PlayerGesture.Brightness -> {
+                setBrightness(g.value)
+                feedback = "\u2600 ${(g.value * 100).toInt()}%"
+            }
+            is PlayerGesture.Volume -> {
+                setVolume(g.value)
+                feedback = "\ud83d\udd0a ${g.value}/${g.max}"
+            }
+        }
+    }
+
+    /** Applies a real track override from the current tracks snapshot. */
+    fun pickTrack(t: TrackEntry) {
+        val c = controller ?: return
+        val group = c.currentTracks.groups.getOrNull(t.groupIndex) ?: return
+        c.trackSelectionParameters = c.trackSelectionParameters.buildUpon()
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, t.trackIndex))
+            .build()
+    }
+
+    fun toggleSubtitleTrack(on: Boolean) {
+        val c = controller ?: return
+        subsOn = on
+        c.trackSelectionParameters = c.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, !on)
+            .build()
+    }
 
     fun savePosition(c: MediaController?) {
         val p = c ?: return
@@ -211,6 +351,20 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                     }
                 }
             }
+
+            override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
+                videoW = size.width
+                videoH = size.height
+            }
+
+            // "End of item" sleep timer: stop here instead of letting the queue continue.
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (sleepEndOfItem) {
+                    sleepEndOfItem = false
+                    sleepMenu = false
+                    c?.pause()
+                }
+            }
         }
         c?.addListener(listener)
         val window = activity?.window
@@ -224,6 +378,12 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             c?.removeListener(listener)
             ctrl?.show(WindowInsetsCompat.Type.systemBars())
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            // Hand brightness back to the system: the gesture only ever touched this window.
+            activity?.window?.let { w ->
+                val lp = w.attributes
+                lp.screenBrightness = -1f
+                w.attributes = lp
+            }
         }
     }
 
@@ -351,17 +511,19 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         useController = false
                     }
                 },
-                update = { it.player = controller },
+                update = { pv ->
+                    pv.player = controller
+                    // Fit / crop / stretch, applied to the real PlayerView (no re-layout hacks).
+                    pv.resizeMode = resizeMode
+                },
             )
         }
 
-        // Video: tap anywhere toggles the custom controls; 250 ms state poll drives the seek bar.
-        if (!isAudio) {
-            Box(
-                Modifier.fillMaxSize().pointerInput(Unit) {
-                    detectTapGestures(onTap = { controlsVisible = !controlsVisible })
-                },
-            )
+        // Video gestures: tap toggles the controls, double-tap seeks or plays, vertical swipes on
+        // the edges drive brightness/volume and a horizontal swipe seeks. Audio keeps its
+        // always-on controls and no brightness gesture (there is no picture to dim).
+        if (!isAudio && !locked) {
+            GestureLayer(::brightnessNow, ::volumeNow, ::handleGesture)
         }
 
         if (isAudio) {
@@ -392,85 +554,101 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
         }
 
-        if (controlsVisible || isAudio) {
+        val audioTracks = trackLabels.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+        val textTracks = trackLabels.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+
+        fun rotate() {
+            landscape = !landscape
+            activity?.requestedOrientation = if (landscape) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+
+        if (!locked && (controlsVisible || isAudio)) {
             Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text(item.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // Truncated here; tapping shows the full name.
+                        Text(
+                            item.name, color = Color.White, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { titleOpen = true },
+                        )
                         val kbps = (StreamingRuntime.estimator.ewmaBps / 1000).toInt()
                         Text(
-                            "Buffered +${aheadMs / 1000}s · ${fmtSize(item.size)}" +
-                                (if (kbps > 0) " · ~$kbps kbps" else "") +
-                                (if (mode != StreamingMode.NORMAL) " · ${mode.label}" else ""),
+                            "Buffered +${aheadMs / 1000}s \u00b7 ${fmtSize(item.size)}" +
+                                (if (kbps > 0) " \u00b7 ~$kbps kbps" else "") +
+                                (if (mode != StreamingMode.NORMAL) " \u00b7 ${mode.label}" else ""),
                             color = Color(0xCCFFFFFF), fontSize = 11.sp,
                         )
                     }
                     if (!isAudio) {
-                        TextButton(onClick = {
-                            landscape = !landscape
-                            activity?.requestedOrientation = if (landscape) {
-                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            } else {
-                                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                            }
-                        }) { Text("Rotate", color = Color.White) }
-                        TextButton(onClick = { activity?.enterPip() }) { Text("PiP", color = Color.White) }
-                    }
-                    Box {
-                        TextButton(onClick = { sleepMenu = true }) { Text(if (sleepMin > 0) "Sleep ${sleepMin}m" else "Sleep", color = Color.White) }
-                        DropdownMenu(expanded = sleepMenu, onDismissRequest = { sleepMenu = false }) {
-                            listOf(0 to "Off", 15 to "15 min", 30 to "30 min", 60 to "1 hour").forEach { (m, label) ->
-                                DropdownMenuItem(text = { Text(label) }, onClick = { sleepMin = m; sleepMenu = false })
-                            }
+                        IconButton(onClick = { locked = true }) {
+                            Icon(Icons.Filled.Lock, "Lock controls", tint = Color.White)
                         }
                     }
                     Box {
-                        TextButton(onClick = { speedMenu = true }) { Text("${Prefs.playbackSpeed}×", color = Color.White) }
-                        DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
-                            listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s ->
+                        IconButton(onClick = { moreMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, "More options", tint = Color.White)
+                        }
+                        DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                            // Only options that mean something for this item are offered.
+                            if (!isAudio) {
                                 DropdownMenuItem(
-                                    text = { Text("${s}×") },
-                                    onClick = {
-                                        Prefs.updatePlaybackSpeed(s)
-                                        controller?.setPlaybackSpeed(s)
-                                        speedMenu = false
-                                    },
+                                    text = { Text("Aspect ratio: ${GestureMath.resizeLabel(resizeMode)}") },
+                                    leadingIcon = { Icon(Icons.Filled.AspectRatio, null) },
+                                    onClick = { resizeMode = GestureMath.nextResizeMode(resizeMode) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Rotate screen") },
+                                    leadingIcon = { Icon(Icons.Filled.ScreenRotation, null) },
+                                    onClick = { moreMenu = false; rotate() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Picture in picture") },
+                                    leadingIcon = { Icon(Icons.Filled.PictureInPictureAlt, null) },
+                                    onClick = { moreMenu = false; activity?.enterPip() },
                                 )
                             }
-                        }
-                    }
-                    if (trackLabels.isNotEmpty()) {
-                        Box {
-                            TextButton(onClick = { trackMenu = true }) { Text("Tracks", color = Color.White) }
-                            DropdownMenu(expanded = trackMenu, onDismissRequest = { trackMenu = false }) {
-                                trackLabels.forEach { t ->
-                                    DropdownMenuItem(
-                                        text = { Text((if (t.selected) "✓ " else "") + t.label) },
-                                        onClick = {
-                                            val c = controller
-                                            if (c != null) {
-                                                val group = c.currentTracks.groups.getOrNull(t.groupIndex)
-                                                if (group != null) {
-                                                    c.trackSelectionParameters = c.trackSelectionParameters
-                                                        .buildUpon()
-                                                        .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, t.trackIndex))
-                                                        .build()
-                                                }
-                                            }
-                                            trackMenu = false
-                                        },
-                                    )
-                                }
+                            if (textTracks.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text(if (subsOn) "Subtitles: on" else "Subtitles: off") },
+                                    leadingIcon = { Icon(Icons.Filled.Subtitles, null) },
+                                    onClick = { toggleSubtitleTrack(!subsOn) },
+                                )
                             }
+                            DropdownMenuItem(
+                                text = { Text(if (locked) "Unlock controls" else "Lock controls") },
+                                leadingIcon = {
+                                    Icon(if (locked) Icons.Filled.LockOpen else Icons.Filled.Lock, null)
+                                },
+                                onClick = { locked = !locked; moreMenu = false },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Show full name") },
+                                onClick = { moreMenu = false; titleOpen = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Playback info") },
+                                leadingIcon = { Icon(Icons.Filled.Info, null) },
+                                onClick = { moreMenu = false; infoOpen = true },
+                            )
                         }
                     }
                 }
+                // One scrollable row keeps every control reachable on a narrow phone without
+                // squeezing the title: the three streaming modes plus orientation, PiP, sleep,
+                // speed and the real audio/subtitle track pickers.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(start = 8.dp).horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+                        .horizontalScroll(rememberScrollState()),
                 ) {
                     FilterChip(
                         selected = mode == StreamingMode.NORMAL,
@@ -487,6 +665,128 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         onClick = { applyMode(StreamingMode.EXTREME_LOW_DATA) },
                         label = { Text(StreamingMode.EXTREME_LOW_DATA.label, fontSize = 11.sp) },
                     )
+                    if (!isAudio) {
+                        AssistBtn(Icons.Filled.ScreenRotation, "Rotate", ::rotate)
+                        AssistBtn(Icons.Filled.PictureInPictureAlt, "PiP") { activity?.enterPip() }
+                        AssistBtn(Icons.Filled.AspectRatio, GestureMath.resizeLabel(resizeMode)) {
+                            resizeMode = GestureMath.nextResizeMode(resizeMode)
+                        }
+                    }
+                    Box {
+                        TextButton(
+                            onClick = { sleepMenu = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Filled.Timer, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text(
+                                when {
+                                    sleepEndOfItem -> "End of item"
+                                    sleepMin > 0 -> "Sleep ${sleepMin}m"
+                                    else -> "Sleep"
+                                },
+                                color = Color.White, fontSize = 11.sp, maxLines = 1,
+                            )
+                        }
+                        DropdownMenu(expanded = sleepMenu, onDismissRequest = { sleepMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Off") },
+                                onClick = { sleepMin = 0; sleepEndOfItem = false; sleepMenu = false },
+                            )
+                            GestureMath.SLEEP_MINUTES.forEach { m ->
+                                DropdownMenuItem(
+                                    text = { Text((if (sleepMin == m) "\u2713 " else "") + "$m minutes") },
+                                    onClick = {
+                                        sleepMin = m; sleepEndOfItem = false; sleepMenu = false
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text((if (sleepEndOfItem) "\u2713 " else "") + "End of this item") },
+                                onClick = { sleepMin = 0; sleepEndOfItem = true; sleepMenu = false },
+                            )
+                        }
+                    }
+                    Box {
+                        TextButton(
+                            onClick = { speedMenu = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) {
+                            Icon(Icons.Filled.Speed, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text("${Prefs.playbackSpeed}\u00d7", color = Color.White, fontSize = 11.sp)
+                        }
+                        DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                            GestureMath.SPEEDS.forEach { sp0 ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            (if (kotlin.math.abs(sp0 - Prefs.playbackSpeed) < 0.01f) "\u2713 " else "") +
+                                                "${sp0}\u00d7",
+                                        )
+                                    },
+                                    onClick = { setSpeed(sp0); speedMenu = false },
+                                )
+                            }
+                        }
+                    }
+                    if (audioTracks.isNotEmpty()) {
+                        Box {
+                            TextButton(
+                                onClick = { audioMenu = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Icon(Icons.Filled.Audiotrack, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.size(4.dp))
+                                Text(
+                                    audioTracks.firstOrNull { it.selected }?.label?.take(14) ?: "Audio",
+                                    color = Color.White, fontSize = 11.sp, maxLines = 1,
+                                )
+                            }
+                            DropdownMenu(expanded = audioMenu, onDismissRequest = { audioMenu = false }) {
+                                audioTracks.forEach { t ->
+                                    DropdownMenuItem(
+                                        text = { Text((if (t.selected) "\u2713 " else "") + t.label) },
+                                        onClick = { pickTrack(t); audioMenu = false },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (textTracks.isNotEmpty()) {
+                        Box {
+                            TextButton(
+                                onClick = { subsMenu = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Icon(Icons.Filled.Subtitles, null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.size(4.dp))
+                                Text(
+                                    if (!subsOn) "Off"
+                                    else textTracks.firstOrNull { it.selected }?.label?.take(12) ?: "Subtitles",
+                                    color = Color.White, fontSize = 11.sp, maxLines = 1,
+                                )
+                            }
+                            DropdownMenu(expanded = subsMenu, onDismissRequest = { subsMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text((if (!subsOn) "\u2713 " else "") + "Subtitles off") },
+                                    onClick = { toggleSubtitleTrack(false); subsMenu = false },
+                                )
+                                textTracks.forEach { t ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text((if (subsOn && t.selected) "\u2713 " else "") + t.label)
+                                        },
+                                        onClick = {
+                                            toggleSubtitleTrack(true)
+                                            pickTrack(t)
+                                            subsMenu = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 if (metered && Prefs.mobileDataWarning && !warnDismissed && mode == StreamingMode.NORMAL) {
                     Row(
@@ -505,9 +805,19 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
         }
 
+        // Locked: no gestures, no controls, just a way back out.
+        if (locked) {
+            IconButton(
+                onClick = { locked = false },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(20.dp),
+            ) {
+                Icon(Icons.Filled.LockOpen, "Unlock controls", tint = Color.White)
+            }
+        }
+
         // Custom bottom controls (video + audio) — YouTube-style timeline with three real tracks.
         // Audio keeps it permanently visible; video toggles it with a tap.
-        if (controller != null && (isAudio || controlsVisible || uiHold || uiUserPaused)) {
+        if (!locked && controller != null && (isAudio || controlsVisible || uiHold || uiUserPaused)) {
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
@@ -529,6 +839,13 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                             tint = Color.White,
                         )
                     }
+                    // Relative seek, disabled when the source reports no real duration.
+                    IconButton(onClick = { seekBy(-GestureMath.SEEK_STEP_SECONDS) }, enabled = durMs > 0) {
+                        Icon(Icons.Filled.Replay10, "Back 10 seconds", tint = Color.White)
+                    }
+                    IconButton(onClick = { seekBy(GestureMath.SEEK_STEP_SECONDS) }, enabled = durMs > 0) {
+                        Icon(Icons.Filled.Forward10, "Forward 10 seconds", tint = Color.White)
+                    }
                     if (items.size > 1) {
                         IconButton(onClick = { controller?.seekToPrevious() }) {
                             Icon(Icons.Filled.SkipPrevious, "Previous", tint = Color.White)
@@ -538,7 +855,8 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         }
                     }
                     Text(
-                        "${fmtDur((posMs / 1000).toInt())} / ${fmtDur((durMs / 1000).toInt())}",
+                        "${fmtDur((posMs / 1000).toInt())} / " +
+                            (if (durMs > 0) fmtDur((durMs / 1000).toInt()) else "--:--"),
                         color = Color.White, fontSize = 12.sp,
                         modifier = Modifier.padding(start = 4.dp),
                     )
@@ -546,7 +864,7 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                     // Pause-to-buffer / start-gate status: honest, from real runtime counters.
                     when {
                         uiHold -> Text(
-                            "Building buffer… +${aheadMs / 1000}s",
+                            "Building buffer\u2026 +${aheadMs / 1000}s",
                             color = Color(0xCCFFFFFF), fontSize = 11.sp,
                         )
                         uiUserPaused && aheadBytes > 0 -> Text(
@@ -554,8 +872,100 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                             color = Color(0xCCFFFFFF), fontSize = 11.sp,
                         )
                     }
+                    TextButton(
+                        onClick = ::cycleSpeed,
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text("${Prefs.playbackSpeed}\u00d7", color = Color.White, fontSize = 12.sp) }
+                    if (!isAudio) {
+                        IconButton(onClick = ::rotate) {
+                            Icon(Icons.Filled.ScreenRotation, "Rotate", tint = Color.White)
+                        }
+                        IconButton(onClick = { locked = true }) {
+                            Icon(Icons.Filled.Lock, "Lock controls", tint = Color.White)
+                        }
+                    }
+                }
+                if (durMs <= 0) {
+                    Text(
+                        "This source reports no duration, so seeking is unavailable.",
+                        color = Color(0xCCFFFFFF), fontSize = 11.sp,
+                        modifier = Modifier.padding(bottom = 4.dp),
+                    )
                 }
             }
+        }
+
+        // Gesture read-out: transient, and the only overlay a swipe produces.
+        feedback?.let { f ->
+            Surface(
+                Modifier.align(Alignment.Center),
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xCC000000),
+            ) {
+                Text(
+                    f, color = Color.White, fontSize = 16.sp,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                )
+            }
+        }
+
+        if (titleOpen) {
+            AlertDialog(
+                onDismissRequest = { titleOpen = false },
+                confirmButton = { TextButton(onClick = { titleOpen = false }) { Text("Close") } },
+                title = { Text("Full name") },
+                text = { Text(item.name) },
+            )
+        }
+
+        if (infoOpen) {
+            val c = controller
+            val metaBitrate = StreamingRuntime.mediaBitrateBps
+            val measured = StreamingRuntime.estimator.ewmaBps
+            val pfx = StreamingRuntime.loadedPrefix
+            val pct = GestureMath.bufferedPercent(posMs, posMs + aheadMs, durMs)
+            AlertDialog(
+                onDismissRequest = { infoOpen = false },
+                confirmButton = { TextButton(onClick = { infoOpen = false }) { Text("Close") } },
+                title = { Text("Playback info") },
+                text = {
+                    Column {
+                        InfoLine("Player", "MediaController \u2192 PlaybackService (ExoPlayer)")
+                        InfoLine("Streaming mode", mode.label)
+                        InfoLine(
+                            "Resolution",
+                            if (videoW > 0 && videoH > 0) "$videoW\u00d7$videoH" else "unknown",
+                        )
+                        InfoLine(
+                            "Bitrate (from size/duration)",
+                            if (metaBitrate > 0) "${metaBitrate / 1000} kbps" else "unknown",
+                        )
+                        InfoLine(
+                            "Throughput (measured)",
+                            if (measured > 0) "${(measured / 1000).toInt()} kbps" else "unknown",
+                        )
+                        InfoLine("Buffered ahead", "+${aheadMs / 1000}s")
+                        InfoLine(
+                            "Buffered share",
+                            if (pct >= 0) "$pct% of duration" else "unknown duration",
+                        )
+                        InfoLine(
+                            "Downloaded window",
+                            if (pfx.fileId == item.fileId && pfx.fileSize > 0) {
+                                "${(pfx.fraction * 100).toInt()}% of ${fmtSize(pfx.fileSize)}"
+                            } else "not started for this item",
+                        )
+                        InfoLine("Rebuffer events", "${StreamingRuntime.rebufferCount}")
+                        InfoLine("Item size", fmtSize(item.size))
+                        InfoLine(
+                            "Position",
+                            "${fmtDur((posMs / 1000).toInt())} / " +
+                                (if (durMs > 0) fmtDur((durMs / 1000).toInt()) else "unknown"),
+                        )
+                        if (c == null) InfoLine("Controller", "not connected")
+                    }
+                },
+            )
         }
 
         if (buffering && error == null) {
@@ -659,5 +1069,131 @@ private fun android.app.Activity.enterPip() {
                     .build(),
             )
         }
+    }
+}
+
+/**
+ * One gesture the player should execute. The layer below only decides *which* gesture happened —
+ * all playback effects stay in [PlayerScreen], which keeps this testable and side-effect free.
+ */
+private sealed interface PlayerGesture {
+    data object ToggleControls : PlayerGesture
+    data object PlayPause : PlayerGesture
+    data class SeekStep(val seconds: Int) : PlayerGesture
+    data class SeekPreview(val seconds: Int) : PlayerGesture
+    data class SeekCommit(val seconds: Int) : PlayerGesture
+    data class Brightness(val value: Float) : PlayerGesture
+    data class Volume(val value: Int, val max: Int) : PlayerGesture
+}
+
+/**
+ * Full-screen pointer layer for video.
+ *
+ * Two cooperating detectors on one node: a drag state machine ([GestureAxisLock]) that locks to
+ * the dominant axis once the finger passes the touch slop, and a tap/double-tap detector. The drag
+ * runs first and consumes movement as soon as it locks, which cancels the tap detector — so a
+ * swipe can never also register as a tap, and a tap never triggers a seek.
+ */
+@Composable
+private fun GestureLayer(
+    currentBrightness: () -> Float,
+    currentVolume: () -> Pair<Int, Int>,
+    onGesture: (PlayerGesture) -> Unit,
+) {
+    Box(
+        Modifier.fillMaxSize()
+            .pointerInput(Unit) {
+                val lock = GestureAxisLock(viewConfiguration.touchSlop * 1.5f)
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    lock.down(down.position.x, down.position.y)
+                    var startB = currentBrightness()
+                    var startV = currentVolume()
+                    var seek = 0
+                    var active = false
+                    while (true) {
+                        val change = awaitPointerEvent().changes.firstOrNull { it.pressed } ?: break
+                        val axis = lock.move(change.position.x, change.position.y)
+                        if (axis != GestureAxis.NONE) {
+                            if (!active) {
+                                active = true
+                                startB = currentBrightness()
+                                startV = currentVolume()
+                            }
+                            val w = size.width.toFloat()
+                            val h = size.height.toFloat()
+                            if (axis == GestureAxis.VERTICAL) {
+                                when (GestureMath.zoneOf(lock.startX, w)) {
+                                    GestureZone.LEFT ->
+                                        onGesture(
+                                            PlayerGesture.Brightness(
+                                                GestureMath.brightnessFrom(startB, lock.deltaY, h),
+                                            ),
+                                        )
+                                    GestureZone.RIGHT -> {
+                                        val (cur, max) = startV
+                                        onGesture(
+                                            PlayerGesture.Volume(
+                                                GestureMath.volumeFrom(cur, max, lock.deltaY, h),
+                                                max,
+                                            ),
+                                        )
+                                    }
+                                    // Centre vertical drags are left alone: no accidental effect.
+                                    GestureZone.CENTER -> Unit
+                                }
+                            } else {
+                                val s = GestureMath.seekFromDrag(lock.deltaX, w)
+                                if (s != seek) {
+                                    seek = s
+                                    onGesture(PlayerGesture.SeekPreview(s))
+                                }
+                            }
+                            change.consume()
+                        }
+                    }
+                    if (active && lock.axis == GestureAxis.HORIZONTAL) {
+                        onGesture(PlayerGesture.SeekCommit(seek))
+                    }
+                    lock.up()
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onGesture(PlayerGesture.ToggleControls) },
+                    onDoubleTap = { off ->
+                        val s = GestureMath.doubleTapSeconds(off.x, size.width.toFloat())
+                        onGesture(
+                            if (s != 0) PlayerGesture.SeekStep(s) else PlayerGesture.PlayPause,
+                        )
+                    },
+                )
+            },
+    )
+}
+
+/** Compact labelled icon action used in the player's scrollable control row. */
+@Composable
+private fun AssistBtn(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp)) {
+        Icon(icon, label, tint = Color.White, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.size(4.dp))
+        Text(label, color = Color.White, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(
+            label, Modifier.weight(1f), fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(value, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

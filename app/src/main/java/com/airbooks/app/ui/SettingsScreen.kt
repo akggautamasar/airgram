@@ -64,7 +64,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: (() -> Unit)? = null) {
     val scope = rememberCoroutineScope()
     var cacheBytes by remember { mutableLongStateOf(0L) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -93,7 +93,10 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     Scaffold(topBar = {
         TopAppBar(title = { Text("⚙ Settings") }, navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            // Null when Settings is a bottom-nav destination rather than a pushed screen.
+            if (onBack != null) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+            }
         })
     }) { pad ->
         Column(

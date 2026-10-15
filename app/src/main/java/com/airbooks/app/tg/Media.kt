@@ -14,11 +14,35 @@ enum class Section(val label: String) {
 data class ChatRow(
     val id: Long,
     val title: String,
+    /** Type label used by the existing filters: Private chat / Group / Channel / Saved messages. */
     val subtitle: String,
     val photoId: Int,
     val order: Long,
     val unread: Int = 0,
-)
+    val pinned: Boolean = false,
+    val muted: Boolean = false,
+    val markedUnread: Boolean = false,
+    /** Last-message one-liner (real content; empty when the chat has no messages loaded). */
+    val preview: String = "",
+    val lastDate: Int = 0,
+    /** Sender name for group previews ("Alice: …"); empty for private chats. */
+    val lastSender: String = "",
+    val lastOutgoing: Boolean = false,
+    val lastMsgId: Long = 0,
+    val lastReadOutboxId: Long = 0,
+    val lastReadInboxId: Long = 0,
+    val draft: String = "",
+    /** Presence/typeline for private chats ("online", "last seen recently"). */
+    val presence: String = "",
+    val canSend: Boolean = false,
+    val saved: Boolean = false,
+    /** private / group / channel / bot / saved. */
+    val kind: String = "private",
+) {
+    /** 0 = none, 1 = sent, 2 = read — for the outgoing last-message ticks. */
+    val ticks: Int get() = ticksFor(lastMsgId, lastReadOutboxId, lastOutgoing)
+    val isGroup: Boolean get() = kind == "group" || kind == "channel"
+}
 
 data class Media(
     val chatId: Long,
@@ -46,12 +70,15 @@ data class Page(val items: List<Media>, val next: Long)
 class ListState {
     val items = mutableStateListOf<Media>()
     var next: Long = -1L
+
+    /** String cursor used by the global (cross-chat) media sections. */
+    var nextStr: String = ""
     var done by mutableStateOf(false)
     var loading by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
 
     fun reset() {
-        items.clear(); next = -1L; done = false; error = null
+        items.clear(); next = -1L; nextStr = ""; done = false; error = null
     }
 }
 
@@ -62,6 +89,10 @@ object Repo {
     fun state(chatId: Long, s: Section, q: String): ListState =
         map.getOrPut("$chatId|${s.name}|$q") { ListState() }
 
+    /** State for the top-level Videos/Audio/Docs/Photos destinations (all chats). */
+    fun globalState(s: Section, q: String): ListState =
+        map.getOrPut("global|${s.name}|$q") { ListState() }
+
     suspend fun loadMore(chatId: Long, s: Section, q: String, st: ListState) {
         if (st.loading || st.done) return
         st.loading = true
@@ -71,6 +102,24 @@ object Repo {
             val known = st.items.mapTo(HashSet()) { it.msgId }
             st.items.addAll(p.items.filter { it.msgId !in known })
             if (p.next == 0L) st.done = true else st.next = p.next
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            st.error = e.message ?: "Failed to load"
+        } finally {
+            st.loading = false
+        }
+    }
+
+    suspend fun loadMoreGlobal(s: Section, q: String, st: ListState) {
+        if (st.loading || st.done) return
+        st.loading = true
+        st.error = null
+        try {
+            val (items, next) = Tg.searchMediaGlobal(s, q, st.nextStr)
+            val known = st.items.mapTo(HashSet()) { it.key }
+            st.items.addAll(items.filter { it.key !in known })
+            if (next.isEmpty() || items.isEmpty()) st.done = true else st.nextStr = next
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

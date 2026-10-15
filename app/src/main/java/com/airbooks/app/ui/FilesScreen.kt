@@ -143,7 +143,7 @@ fun FilesScreen(
 }
 
 @Composable
-private fun Footer(st: ListState, onMore: () -> Unit) {
+internal fun Footer(st: ListState, onMore: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
         when {
             st.loading -> CircularProgressIndicator()
@@ -158,7 +158,7 @@ private fun Footer(st: ListState, onMore: () -> Unit) {
 }
 
 @Composable
-private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
+internal fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyGridState()
     val nearEnd by remember {
         derivedStateOf {
@@ -176,7 +176,7 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDo
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        items(st.items, key = { it.msgId }) { m ->
+        items(st.items, key = { it.key }) { m ->
             Box(
                 Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onClick(m) }
             ) {
@@ -201,7 +201,7 @@ private fun MediaGrid(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDo
 }
 
 @Composable
-private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
+internal fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDownload: (Media) -> Unit, onClick: (Media) -> Unit) {
     val state = rememberLazyListState()
     val nearEnd by remember {
         derivedStateOf {
@@ -212,7 +212,7 @@ private fun MediaList(st: ListState, onMore: () -> Unit, thumbsOn: Boolean, onDo
     LaunchedEffect(nearEnd, st.items.size) { if (nearEnd) onMore() }
 
     LazyColumn(state = state, modifier = Modifier.fillMaxSize()) {
-        items(st.items, key = { it.msgId }) { m ->
+        items(st.items, key = { it.key }) { m ->
             Row(
                 Modifier.fillMaxWidth().clickable { onClick(m) }.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,

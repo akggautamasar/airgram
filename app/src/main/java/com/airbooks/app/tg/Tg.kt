@@ -181,9 +181,54 @@ object Tg {
                 }
             }
             is TdApi.UpdateChatReadInbox -> {
-                chatMap[o.chatId]?.let { it.unreadCount = o.unreadCount }
+                chatMap[o.chatId]?.let {
+                    it.unreadCount = o.unreadCount
+                    it.lastReadInboxMessageId = o.lastReadInboxMessageId
+                }
                 dirty.trySend(Unit)
             }
+            is TdApi.UpdateChatReadOutbox -> {
+                chatMap[o.chatId]?.let { it.lastReadOutboxMessageId = o.lastReadOutboxMessageId }
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateChatIsMarkedAsUnread -> {
+                chatMap[o.chatId]?.let { it.isMarkedAsUnread = o.isMarkedAsUnread }
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateChatNotificationSettings -> {
+                chatMap[o.chatId]?.let { it.notificationSettings = o.notificationSettings }
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateChatDraftMessage -> {
+                chatMap[o.chatId]?.let {
+                    it.draftMessage = o.draftMessage
+                    it.positions = o.positions
+                }
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateUser -> {
+                userMap[o.user.id] = o.user
+                presenceMap[o.user.id] = presenceText(o.user.status)
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateUserStatus -> {
+                presenceMap[o.userId] = presenceText(o.status)
+                dirty.trySend(Unit)
+            }
+            // ── live messages ──
+            is TdApi.UpdateNewMessage -> {
+                ChatRepo.onNew(MsgMapper.map(o.message, names) { f -> seen(f) })
+                dirty.trySend(Unit)
+            }
+            is TdApi.UpdateDeleteMessages -> ChatRepo.onDelete(o.chatId, o.messageIds)
+            is TdApi.UpdateMessageContent -> refetchMessage(o.chatId, o.messageId)
+            is TdApi.UpdateMessageEdited -> ChatRepo.onEditDate(o.chatId, o.messageId, o.editDate)
+            is TdApi.UpdateMessageReactions ->
+                ChatRepo.onReactions(o.chatId, o.messageId, reactionsOf(o.reactions))
+            is TdApi.UpdateMessageSendSucceeded ->
+                ChatRepo.onSendSucceeded(o.oldMessageId, MsgMapper.map(o.message, names) { f -> seen(f) })
+            is TdApi.UpdateMessageSendFailed ->
+                ChatRepo.onSendFailed(o.oldMessageId, MsgMapper.map(o.message, names) { f -> seen(f) })
             is TdApi.UpdateFile -> {
                 fileMap[o.file.id] = o.file
                 _fileEvents.tryEmit(o.file)
@@ -197,21 +242,61 @@ object Tg {
         for (c in chatMap.values) {
             val t = c.type
             val self = t is TdApi.ChatTypePrivate && t.userId == meId
+            val peerId = (t as? TdApi.ChatTypePrivate)?.userId ?: 0L
+            val kind = when (t) {
+                is TdApi.ChatTypePrivate ->
+                    if (self) "saved" else if (isBotUser(peerId)) "bot" else "private"
+                is TdApi.ChatTypeBasicGroup -> "group"
+                is TdApi.ChatTypeSupergroup -> if (t.isChannel) "channel" else "group"
+                else -> "other"
+            }
+            // Labels the existing Chats filters match on — keep them byte-identical.
             val sub = when (t) {
                 is TdApi.ChatTypePrivate -> if (self) "Saved messages" else "Private chat"
                 is TdApi.ChatTypeBasicGroup -> "Group"
                 is TdApi.ChatTypeSupergroup -> if (t.isChannel) "Channel" else "Group"
                 else -> ""
             }
+            val last = c.lastMessage
+            val draft = (c.draftMessage?.content as? TdApi.DraftMessageContentText)?.text?.text.orEmpty()
+            val muted = c.notificationSettings?.let { !it.useDefaultMuteFor && it.muteFor > 0 } == true
+            val base = ChatRow(
+                id = c.id,
+                title = if (self) "Saved Messages" else c.title,
+                subtitle = sub,
+                photoId = seen(c.photo?.small),
+                order = 0L,
+                unread = c.unreadCount,
+                muted = muted,
+                markedUnread = c.isMarkedAsUnread,
+                preview = if (draft.isNotBlank()) "Draft: $draft" else MsgMapper.preview(last?.content),
+                lastDate = last?.date ?: 0,
+                lastSender = if (last != null && !last.isOutgoing && (kind == "group" || kind == "channel")) {
+                    names.sender(last.senderId)
+                } else "",
+                lastOutgoing = last?.isOutgoing == true,
+                lastMsgId = last?.id ?: 0L,
+                lastReadOutboxId = c.lastReadOutboxMessageId,
+                lastReadInboxId = c.lastReadInboxMessageId,
+                draft = draft,
+                presence = if (kind == "private" || kind == "bot") presence(peerId) else "",
+                // Only hide the composer when Telegram explicitly forbids posting (channels etc.).
+                canSend = self || c.permissions?.canSendBasicMessages != false,
+                saved = self,
+                kind = kind,
+            )
             for (pos in c.positions) {
                 if (pos.order == 0L) continue
                 val key = listKey(pos.list) ?: continue
                 seen(c.photo?.small)
                 byList.getOrPut(key) { mutableListOf() }
-                    .add(ChatRow(c.id, if (self) "Saved Messages" else c.title, sub, c.photo?.small?.id ?: 0, pos.order, c.unreadCount))
+                    .add(base.copy(order = pos.order, pinned = pos.isPinned))
             }
         }
-        byList.values.forEach { list -> list.sortByDescending { it.order } }
+        // Telegram ordering: pinned chats first, then descending position order.
+        byList.values.forEach { list ->
+            list.sortWith(compareByDescending<ChatRow> { it.pinned }.thenByDescending { it.order })
+        }
         chatsByList.value = byList
         chats.value = byList["main"] ?: emptyList()
     }
@@ -241,6 +326,24 @@ object Tg {
     }
 
     /** Lazily page a non-main list (archive / folder) until TDLib reports it exhausted. */
+    private val mainDone = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Loads the next batch of the main chat list. TDLib resumes where the previous call stopped and
+     * answers 404 once every chat is loaded, so the list can grow incrementally — no chat history
+     * or attachment is fetched for the list itself.
+     */
+    suspend fun loadMoreChats(): Boolean {
+        if (!isReady || mainDone.get()) return false
+        return try {
+            send(TdApi.LoadChats(TdApi.ChatListMain(), 100))
+            true
+        } catch (e: TdException) {
+            if (e.code == 404) mainDone.set(true)
+            false
+        }
+    }
+
     suspend fun ensureList(key: String) {
         if (key == "main" || !loadedLists.add(key)) return
         val list: TdApi.ChatList = when {
@@ -301,6 +404,9 @@ object Tg {
         fileMap[f.id] = f
         return f.id
     }
+
+    /** Registers files from a message so previews and the player can resolve them. */
+    internal fun track(f: TdApi.File?): Int = seen(f)
 
     suspend fun getFile(id: Int): TdApi.File =
         fileMap[id] ?: send(TdApi.GetFile(id)).also { fileMap[id] = it }
@@ -466,6 +572,234 @@ object Tg {
             }
         }
     }
+
+    // ────────────────────── users, presence & messages ──────────────────────
+
+    private val userMap = ConcurrentHashMap<Long, TdApi.User>()
+    private val presenceMap = ConcurrentHashMap<Long, String>()
+    private val nameRequested = ConcurrentHashMap.newKeySet<Long>()
+
+    /** Display name for a user; asks TDLib once when it is not cached yet. */
+    fun userName(id: Long): String {
+        if (id <= 0L) return ""
+        val u = userMap[id] ?: run { requestUser(id); return "" }
+        return listOf(u.firstName, u.lastName).filter { it.isNotBlank() }.joinToString(" ")
+            .ifBlank { u.phoneNumber.orEmpty().ifBlank { "User $id" } }
+    }
+
+    private fun requestUser(id: Long) {
+        if (!isReady || id <= 0L || !nameRequested.add(id)) return
+        client.send(TdApi.GetUser(id)) { r ->
+            if (r is TdApi.User) {
+                userMap[r.id] = r
+                presenceMap[r.id] = presenceText(r.status)
+                dirty.trySend(Unit)
+            }
+        }
+    }
+
+    fun presence(userId: Long): String = presenceMap[userId] ?: ""
+
+    fun isBotUser(userId: Long): Boolean = userMap[userId]?.type is TdApi.UserTypeBot
+
+    private fun presenceText(s: TdApi.UserStatus?): String = when (s) {
+        is TdApi.UserStatusOnline -> "online"
+        is TdApi.UserStatusOffline -> "last seen ${relTime(s.wasOnline)}"
+        is TdApi.UserStatusRecently -> "last seen recently"
+        is TdApi.UserStatusLastWeek -> "last seen within a week"
+        is TdApi.UserStatusLastMonth -> "last seen within a month"
+        else -> ""
+    }
+
+    private fun relTime(unix: Int): String {
+        if (unix <= 0) return "recently"
+        val mins = (System.currentTimeMillis() / 1000 - unix) / 60
+        return when {
+            mins < 1 -> "just now"
+            mins < 60 -> "${mins}m ago"
+            mins < 60 * 24 -> "${mins / 60}h ago"
+            mins < 60 * 24 * 7 -> "${mins / (60 * 24)}d ago"
+            else -> {
+                // Uses the pure calendar helpers in this package (no Android/i18n dependency).
+                val now = (System.currentTimeMillis() / 1000).toInt()
+                val tz = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000
+                dayLabel(dayBucket(unix, tz), dayBucket(now, tz))
+            }
+        }
+    }
+
+    private val names = object : NameResolver {
+        override fun sender(s: TdApi.MessageSender?): String = when (s) {
+            is TdApi.MessageSenderUser -> if (s.userId == meId) "You" else userName(s.userId)
+            is TdApi.MessageSenderChat -> chatMap[s.chatId]?.title.orEmpty()
+            else -> ""
+        }
+
+        override fun origin(o: TdApi.MessageOrigin?): String = when (o) {
+            is TdApi.MessageOriginUser -> userName(o.senderUserId)
+            is TdApi.MessageOriginChat ->
+                chatMap[o.senderChatId]?.title ?: o.authorSignature.orEmpty()
+            is TdApi.MessageOriginChannel ->
+                o.authorSignature?.takeIf { it.isNotBlank() } ?: chatMap[o.chatId]?.title.orEmpty()
+            else -> ""
+        }
+    }
+
+    /** One older page of a conversation (newest-first), plus TDLib's total when known. */
+    suspend fun history(chatId: Long, fromId: Long, offset: Int, limit: Int): Pair<List<Msg>, Int> {
+        val req = TdApi.GetChatHistory()
+        req.chatId = chatId
+        req.fromMessageId = fromId
+        req.offset = offset
+        req.limit = limit
+        req.onlyLocal = false
+        val r = send(req)
+        return r.messages.map { MsgMapper.map(it, names) { f -> seen(f) } } to r.totalCount
+    }
+
+    suspend fun getMessage(chatId: Long, msgId: Long): Msg? = runCatching {
+        val m = send(TdApi.GetMessage(chatId, msgId))
+        MsgMapper.map(m, names) { f -> seen(f) }
+    }.getOrNull()
+
+    suspend fun sendText(chatId: Long, text: String, replyToId: Long = 0L): Msg {
+        val req = TdApi.SendMessage()
+        req.chatId = chatId
+        if (replyToId > 0L) req.replyTo = TdApi.InputMessageReplyToMessage().apply { messageId = replyToId }
+        req.inputMessageContent = TdApi.InputMessageText().apply {
+            this.text = TdApi.FormattedText().apply { this.text = text; entities = emptyArray() }
+            clearDraft = true
+        }
+        return MsgMapper.map(send(req), names) { f -> seen(f) }
+    }
+
+    /**
+     * Sends a local file from the system picker. The mime/name decide the Telegram content type so
+     * photos, videos, GIFs and documents all arrive the way the recipient expects them.
+     */
+    suspend fun sendFile(chatId: Long, path: String, mime: String, name: String, caption: String = ""): Msg {
+        val cap = TdApi.FormattedText().apply { text = caption; entities = emptyArray() }
+        val local = TdApi.InputFileLocal().apply { this.path = path }
+        val gif = mime == "image/gif" || name.endsWith(".gif", true)
+        val content: TdApi.InputMessageContent = when {
+            gif -> TdApi.InputMessageAnimation().apply {
+                animation = TdApi.InputAnimation().apply { this.animation = local }
+                this.caption = cap
+            }
+            mime.startsWith("image/") -> TdApi.InputMessagePhoto().apply {
+                photo = TdApi.InputPhoto().apply { this.photo = local }
+                this.caption = cap
+            }
+            mime.startsWith("video/") -> TdApi.InputMessageVideo().apply {
+                video = TdApi.InputVideo().apply { this.video = local; supportsStreaming = true }
+                this.caption = cap
+            }
+            mime.startsWith("audio/") -> TdApi.InputMessageAudio().apply {
+                audio = TdApi.InputAudio().apply { this.audio = local }
+                this.caption = cap
+            }
+            else -> TdApi.InputMessageDocument().apply {
+                document = TdApi.InputDocument().apply { this.document = local }
+                this.caption = cap
+            }
+        }
+        val req = TdApi.SendMessage()
+        req.chatId = chatId
+        req.inputMessageContent = content
+        return MsgMapper.map(send(req), names) { f -> seen(f) }
+    }
+
+    /** Marks messages read (and clears the unread badge) — the same call Telegram clients make. */
+    fun markRead(chatId: Long, ids: LongArray) {
+        if (!isReady || ids.isEmpty()) return
+        val req = TdApi.ViewMessages()
+        req.chatId = chatId
+        req.messageIds = ids
+        req.source = TdApi.MessageSourceChatHistory()
+        req.forceRead = true
+        client.send(req) {}
+    }
+
+    fun openContent(chatId: Long, msgId: Long) {
+        if (!isReady) return
+        client.send(TdApi.OpenMessageContent(chatId, msgId)) {}
+    }
+
+    fun togglePin(chatId: Long, pinned: Boolean) {
+        if (!isReady) return
+        client.send(TdApi.ToggleChatIsPinned(TdApi.ChatListMain(), chatId, pinned)) { }
+    }
+
+    fun toggleUnread(chatId: Long, unread: Boolean) {
+        if (!isReady) return
+        client.send(TdApi.ToggleChatIsMarkedAsUnread(chatId, unread)) {}
+    }
+
+    /** Mute for a year (Telegram's "mute" default) or unmute. */
+    fun setMuted(chatId: Long, muted: Boolean) {
+        if (!isReady) return
+        val s = TdApi.ChatNotificationSettings()
+        s.useDefaultMuteFor = false
+        s.muteFor = if (muted) 31536000 else 0
+        client.send(TdApi.SetChatNotificationSettings(chatId, s)) {}
+    }
+
+    fun react(chatId: Long, msgId: Long, emoji: String) {
+        if (!isReady) return
+        val req = TdApi.AddMessageReaction()
+        req.chatId = chatId
+        req.messageId = msgId
+        req.reactionType = TdApi.ReactionTypeEmoji().apply { this.emoji = emoji }
+        req.updateRecentReactions = false
+        client.send(req) {}
+    }
+
+    /** Edits the text of a message the current user sent (Telegram rejects anything else). */
+    suspend fun editText(chatId: Long, msgId: Long, text: String): Msg {
+        val req = TdApi.EditMessageText()
+        req.chatId = chatId
+        req.messageId = msgId
+        req.inputMessageContent = TdApi.InputMessageText().apply {
+            this.text = TdApi.FormattedText().apply { this.text = text; entities = emptyArray() }
+        }
+        return MsgMapper.map(send(req), names) { f -> seen(f) }
+    }
+
+    /** Deletes messages, revoking them for the other side where Telegram allows it. */
+    fun deleteMessage(chatId: Long, msgId: Long, revoke: Boolean = true) {
+        if (!isReady) return
+        client.send(TdApi.DeleteMessages(chatId, longArrayOf(msgId), revoke)) {}
+    }
+
+    /** Media search across all chats — powers the top-level Videos/Audio/Docs/Photos tabs. */
+    suspend fun searchMediaGlobal(section: Section, query: String, offset: String): Pair<List<Media>, String> {
+        val req = TdApi.SearchMessages()
+        req.chatList = null
+        req.query = query
+        req.offset = offset
+        req.limit = 40
+        req.filter = when (section) {
+            Section.VIDEOS -> TdApi.SearchMessagesFilterVideo()
+            Section.AUDIO -> TdApi.SearchMessagesFilterAudio()
+            Section.DOCS -> TdApi.SearchMessagesFilterDocument()
+            Section.PHOTOS -> TdApi.SearchMessagesFilterPhoto()
+        }
+        val r = send(req)
+        return r.messages.mapNotNull { toMedia(it) } to r.nextOffset.orEmpty()
+    }
+
+    private fun refetchMessage(chatId: Long, msgId: Long) {
+        if (!isReady) return
+        scope.launch {
+            val m = getMessage(chatId, msgId)
+            if (m != null) ChatRepo.onReplace(m)
+        }
+    }
+
+    private fun reactionsOf(rs: Array<TdApi.MessageReaction>?): List<Reaction> = rs?.mapNotNull { r ->
+        val e = (r.type as? TdApi.ReactionTypeEmoji)?.emoji ?: return@mapNotNull null
+        Reaction(e, r.totalCount, r.isChosen)
+    }.orEmpty()
 
     // ───────────────────────────── files: listing ─────────────────────────────
 
