@@ -116,9 +116,68 @@ data class LoadedPrefix(
     companion object { val EMPTY = LoadedPrefix(0, 0, 0, 0, false) }
 }
 
+/**
+ * Per-session playback measurements (acceptance §6): startup time, buffering duration,
+ * rebuffer events (counted in [StreamingRuntime.rebufferCount]), fetched bytes and
+ * prebuffered seconds. Pure aggregation, JVM-testable; wall-clock values are passed in.
+ */
+class PlaybackMetrics {
+    /** prepare → first READY of the session; -1 until measured. */
+    @Volatile var startupMs: Long = -1L
+        private set
+    /** Cumulative time spent in BUFFERING during the session. */
+    @Volatile var totalBufferingMs: Long = 0L
+        private set
+    /**
+     * Bytes the TDLib prefix grew by during the session — a lower bound on data consumed:
+     * window moves after seeks can re-fetch overlaps that this never double-counts, and it
+     * never fabricates bytes that were not actually downloaded.
+     */
+    @Volatile var bytesFetched: Long = 0L
+        private set
+
+    private var sessionStartAt = -1L
+    private var bufferingSince = -1L
+
+    @Synchronized
+    fun startSession(atMs: Long) {
+        sessionStartAt = atMs
+        startupMs = -1L
+        totalBufferingMs = 0L
+        bytesFetched = 0L
+        bufferingSince = -1L
+    }
+
+    @Synchronized
+    fun markBuffering(atMs: Long) {
+        if (bufferingSince < 0) bufferingSince = atMs
+    }
+
+    @Synchronized
+    fun markReady(atMs: Long) {
+        if (sessionStartAt >= 0 && startupMs < 0) startupMs = (atMs - sessionStartAt).coerceAtLeast(0)
+        if (bufferingSince >= 0) {
+            totalBufferingMs += (atMs - bufferingSince).coerceAtLeast(0)
+            bufferingSince = -1
+        }
+    }
+
+    @Synchronized
+    fun noteBytesFetched(delta: Long) {
+        if (delta > 0) bytesFetched += delta
+    }
+
+    companion object {
+        /** Seconds of media a byte count represents at the average bitrate; -1 if unknown. */
+        fun prebufferSeconds(aheadBytes: Long, mediaBitrateBps: Long): Long =
+            if (mediaBitrateBps > 0 && aheadBytes > 0) aheadBytes * 8 / mediaBitrateBps else -1L
+    }
+}
+
 /** Shared, process-wide diagnostics so the player/settings can show what streaming is doing. */
 object StreamingRuntime {
     val estimator = ThroughputEstimator()
+    val metrics = PlaybackMetrics()
     @Volatile var playbackActive: Boolean = false
     @Volatile var activeMode: StreamingMode = StreamingMode.NORMAL
     @Volatile var activeFileId: Int = 0
@@ -173,11 +232,20 @@ object Prebuffer {
             StreamingMode.NORMAL -> StreamingConfig.NORMAL_WINDOW_MIN_BYTES
         }
         var t = capBytes
-        if (mediaBitrateBps > 0) t = min(t, (mediaBitrateBps / 8.0 * capSec).toLong())
+        var measured = false
+        if (mediaBitrateBps > 0) {
+            t = min(t, (mediaBitrateBps / 8.0 * capSec).toLong())
+            measured = true
+        }
         // Reachability: with 4x head-room over capSec, a target the link cannot deliver in
         // a reasonable time is cut down instead of being chased forever.
-        if (throughputBps > 0) t = min(t, (throughputBps / 8.0 * capSec * 4).toLong())
-        t = max(t, floorBytes)
+        if (throughputBps > 0) {
+            t = min(t, (throughputBps / 8.0 * capSec * 4).toLong())
+            measured = true
+        }
+        // The byte floor only applies when nothing is measured yet; a known bitrate gives
+        // audio-appropriate (small) targets instead of video-sized floors.
+        if (!measured) t = max(t, floorBytes)
         if (fileSizeBytes > 0) t = min(t, fileSizeBytes)
         return t.coerceAtLeast(0)
     }

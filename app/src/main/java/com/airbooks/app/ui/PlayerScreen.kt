@@ -5,7 +5,6 @@ import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Build
 import android.content.pm.ActivityInfo
-import android.view.View
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
@@ -234,6 +233,7 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         StreamingRuntime.playbackActive = true
         StreamingRuntime.activeMode = mode
         StreamingRuntime.activeFileId = item.fileId
+        StreamingRuntime.metrics.startSession(android.os.SystemClock.elapsedRealtime())
         // Average bitrate from real message metadata (bytes/second); the 250 ms poll refines
         // it from the extracted duration once the player reports one.
         StreamingRuntime.mediaBitrateBps =
@@ -344,17 +344,11 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                 factory = { c ->
                     PlayerView(c).apply {
                         keepScreenOn = true
-                        // Audio keeps the built-in controller (prev/next + notification parity).
-                        // Video uses the custom Compose controls below, whose seek bar shows the
-                        // REAL TDLib loaded prefix (YouTube-style) instead of only Media3's buffer.
-                        useController = isAudio
-                        if (isAudio) {
-                            controllerShowTimeoutMs = 0
-                            controllerHideOnTouch = false
-                        }
-                        setControllerVisibilityListener(
-                            PlayerView.ControllerVisibilityListener { v -> controlsVisible = v == View.VISIBLE }
-                        )
+                        // Video AND audio use the custom Compose controls below, whose seek bar
+                        // shows the REAL TDLib loaded prefix (YouTube-style) instead of only
+                        // Media3's buffer. Background playback, the media notification, headset
+                        // controls and queue navigation stay on the MediaSession — unaffected.
+                        useController = false
                     }
                 },
                 update = { it.player = controller },
@@ -511,8 +505,9 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             }
         }
 
-        // Video: custom bottom controls — YouTube-style timeline with three real tracks.
-        if (!isAudio && controller != null && (controlsVisible || uiHold || uiUserPaused)) {
+        // Custom bottom controls (video + audio) — YouTube-style timeline with three real tracks.
+        // Audio keeps it permanently visible; video toggles it with a tap.
+        if (controller != null && (isAudio || controlsVisible || uiHold || uiUserPaused)) {
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))

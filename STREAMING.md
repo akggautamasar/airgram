@@ -72,14 +72,15 @@ not randomly addressable.
   Data start gate** (internal hold — see §2.1) and the **pause-to-buffer pump** dispatch. It
   distinguishes an intentional user pause (`playWhenReady=false` not applied by the gate) from
   an internal buffering hold, and never auto-resumes a user pause.
-- **Player UX**: immersive video, custom Compose video controls with the three-track
-  YouTube-style timeline (§2.1), play/pause + prev/next + elapsed/total, tap-to-toggle controls;
-  audio keeps the `PlayerView` controller (notification parity). Playback-speed menu (persisted),
-  three mode selector chips, subtle "· mode" + buffered-seconds + estimated-kbps diagnostics,
-  live "Prebuffered X MB ahead" / "Building buffer… +Ns" status, audio/subtitle/video track
-  selection menu (real `TrackSelectionOverride`s), rotate + PiP buttons, sleep timer,
-  mobile-data warning with one-tap switch to Low Data, error view that retries from the last
-  position.
+- **Player UX**: immersive video, custom Compose controls for video AND audio with the
+  three-track YouTube-style timeline (§2.1), play/pause + prev/next + elapsed/total,
+  tap-to-toggle controls for video (audio keeps them visible); background playback, the media
+  notification, headset controls and queue navigation remain on the MediaSession.
+  Playback-speed menu (persisted), three mode selector chips, subtle "· mode" + buffered-seconds
+  + estimated-kbps diagnostics, live "Prebuffered X MB ahead" / "Building buffer… +Ns" status,
+  audio/subtitle/video track selection menu (real `TrackSelectionOverride`s), rotate + PiP
+  buttons, sleep timer, mobile-data warning with one-tap switch to Low Data, error view that
+  retries from the last position.
 - **Settings → Streaming**: default mode, remember-last-mode, speed, read-ahead cap, Wi-Fi-only
   prefetch (blocks thumbnail/preview prefetch on metered links; playback still streams),
   mobile-data warning, suspend-thumbnails-in-Low-Data, max temporary cache with enforcement
@@ -135,8 +136,25 @@ track reads `StreamingRuntime.loadedPrefix` at 4 Hz, it visibly grows while the 
 and the pump runs. It never fabricates ranges: TDLib exposes one contiguous prefix per file and
 that is precisely what is drawn. The bar is tap- and drag-seekable (scrub locally, seek on
 release), sits on the always-black player background, so its played/loaded/unloaded colours are
-legible in both light and dark themes. Audio keeps the built-in controller, whose TimeBar shows
-Media3's buffered position while the same pump prebuffers in the background.
+legible in both light and dark themes. **Audio uses the same custom controls and three-track
+bar** (permanently visible under the artwork), so the loaded track grows during audio
+pause-prebuffering too; background playback, the media notification, headset controls and queue
+navigation stay on the MediaSession and are untouched by this.
+
+**Session measurements (acceptance §6).** `PlaybackMetrics` (pure, JVM-tested) aggregates per
+session: startup time (session start → first READY), cumulative BUFFERING duration, rebuffer
+events (`StreamingRuntime.rebufferCount`), prebuffered seconds ahead (bytes × 8 ÷ average
+bitrate; honestly −1 when the bitrate is unknown) and fetched bytes — the latter counted only
+as genuine forward growth of the TDLib prefix, so it is a lower bound (window moves after seeks
+can re-fetch small overlaps that are never double-counted). All five are shown in
+Settings → Streaming → Diagnostics. What cannot be measured here: real-world startup/buffering
+under throttled networks needs a device (see §5 manual script); and no mode promises zero
+buffering when throughput is below the media bitrate.
+
+**Audio-sized targets.** The time-cap adaptation makes pause-prebuffer targets
+audio-appropriate automatically: at a measured 128 kbps the Extreme target is ~4.8 MB (300 s of
+audio), Normal ~1.4 MB, Low Data ~0.5 MB — far below the video byte ceilings. The byte floors
+(0.5/8/12 MB) only apply while neither bitrate nor throughput has been measured yet.
 
 ## 3. Limitations (honest list)
 
@@ -210,6 +228,10 @@ band), Extreme's most-patient-but-bounded backoff, `StartGate` hold/release sema
 only in Extreme, releases on target/EOF/mode change), pump de-duplication (`adoptOrPlan`),
 positive pause targets in every decision, and `LoadedPrefix` fraction clamping for the
 seek-bar rendering.
+`PlaybackMetricsTest` covers the acceptance §6 measurements: one-shot startup timing,
+accumulated buffering across cycles without double-counting, session reset, forward-only byte
+accounting, prebuffered-seconds conversion (honest −1 when the bitrate is unknown), and
+audio-sized pause-prebuffer targets in all three modes (128 kbps → 0.5/1.4/4.8 MB).
 
 Acceptance criteria that need a device + real Telegram account (cannot be reproduced in CI):
 items 1, 2, 7, 10 (real network streaming/seek/recovery/audio), 12 (auth/search against a live

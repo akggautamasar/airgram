@@ -92,6 +92,15 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
         player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                // Acceptance §6 measurements: startup time + cumulative buffering duration.
+                val now = android.os.SystemClock.elapsedRealtime()
+                when (state) {
+                    Player.STATE_BUFFERING -> StreamingRuntime.metrics.markBuffering(now)
+                    Player.STATE_READY -> StreamingRuntime.metrics.markReady(now)
+                }
+            }
+
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 // Queue moved on (possibly without the player screen): drop the previous
                 // item's bitrate estimate and any stand-down so policy relearns this file.

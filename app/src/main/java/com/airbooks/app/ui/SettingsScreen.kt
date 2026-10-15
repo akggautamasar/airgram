@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.airbooks.app.BuildConfig
 import com.airbooks.app.Prefs
+import com.airbooks.app.stream.PlaybackMetrics
 import com.airbooks.app.stream.StreamingMode
 import com.airbooks.app.stream.StreamingRuntime
 import com.airbooks.app.tg.Tg
@@ -305,7 +306,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                             appendLine("Rebuffers this session: ${StreamingRuntime.rebufferCount}")
                             appendLine("Media bitrate estimate: ${if (StreamingRuntime.mediaBitrateBps > 0) "${StreamingRuntime.mediaBitrateBps / 1000} kbps" else "unknown"}")
                             appendLine("User-paused: ${StreamingRuntime.userPaused} · start-gate hold: ${StreamingRuntime.internalHold}")
-                            appendLine("Pause-prebuffered ahead: ${fmtSize(StreamingRuntime.lastPrebufferAheadBytes)}")
+                            val aheadB = StreamingRuntime.lastPrebufferAheadBytes
+                            val pbSec = PlaybackMetrics.prebufferSeconds(aheadB, StreamingRuntime.mediaBitrateBps)
+                            appendLine("Pause-prebuffered ahead: ${fmtSize(aheadB)}${if (pbSec >= 0) " (~${pbSec}s of media)" else ""}")
+                            val m = StreamingRuntime.metrics
+                            appendLine("Session startup: ${if (m.startupMs >= 0) "${m.startupMs} ms" else "not measured yet"}")
+                            appendLine("Session buffering total: ${m.totalBufferingMs / 1000}s (rebuffer events above)")
+                            appendLine("Session bytes fetched (lower bound): ${fmtSize(m.bytesFetched)}")
                             val pfx = StreamingRuntime.loadedPrefix
                             appendLine("Loaded prefix: ${fmtSize(pfx.end)} of ${fmtSize(pfx.fileSize)} (${(pfx.fraction * 100).toInt()}%)${if (pfx.completed) " · complete" else ""}")
                             appendLine("Last streaming error: ${StreamingRuntime.lastError ?: "none"}")

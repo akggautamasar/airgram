@@ -80,6 +80,10 @@ class TdDataSource(
     private var pumpLastHave = -1L
     private var pumpNextKick = 0L
 
+    // Prefix-growth accounting for the data-consumed metric (loader thread only).
+    private var lastPrefixFileId = -1
+    private var lastPrefixEnd = -1L
+
     override fun open(dataSpec: DataSpec): Long = guard { openInner(dataSpec) }
 
     private fun openInner(dataSpec: DataSpec): Long {
@@ -110,6 +114,8 @@ class TdDataSource(
         pumpAttempt = 0
         pumpLastHave = -1L
         pumpNextKick = 0L
+        lastPrefixFileId = -1
+        lastPrefixEnd = -1L
         Tg.beginStream(fileId)
         opened = true
         try {
@@ -227,6 +233,13 @@ class TdDataSource(
     /** Publish the REAL contiguous downloaded prefix for the seek-bar loaded track. */
     private fun publishPrefix(l: TdApi.LocalFile) {
         val end = if (l.isDownloadingCompleted) size else l.downloadOffset + l.downloadedPrefixSize
+        // Data-consumed measurement: count only genuine forward growth of the prefix
+        // (window moves/seek overlaps never double-count; see PlaybackMetrics).
+        if (fileId == lastPrefixFileId && end > lastPrefixEnd) {
+            StreamingRuntime.metrics.noteBytesFetched(end - lastPrefixEnd)
+        }
+        lastPrefixFileId = fileId
+        lastPrefixEnd = end
         StreamingRuntime.loadedPrefix = LoadedPrefix(
             fileId = fileId,
             start = l.downloadOffset,
