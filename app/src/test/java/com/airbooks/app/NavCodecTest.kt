@@ -178,7 +178,10 @@ class NavCodecTest {
 
     @Test
     fun `unknown media kinds fall back to a playable default`() {
-        val encoded = NavCodec.encode(0, listOf(Screen.Pdf(media(1))))
+        // The item really has to carry a PDF kind for the corruption below to hit it (the screen
+        // tag itself is lower-case, and replace() is case-sensitive).
+        val encoded = NavCodec.encode(0, listOf(Screen.Pdf(media(1, "doc.pdf", Kind.PDF))))
+        assertTrue(encoded.contains(Kind.PDF.name))
         val corrupted = encoded.replace(Kind.PDF.name, "NOT_A_KIND")
         val restored = NavCodec.decode(corrupted).second[0] as Screen.Pdf
         assertEquals(Kind.OTHER, restored.item.kind)
