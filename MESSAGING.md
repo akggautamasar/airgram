@@ -186,3 +186,21 @@ chats are reachable from the Archive entry and their own chip.
   phone number, code and a device — that cannot be done from CI. Everything is wired to real TDLib
   calls with no stubs, but the interactive path is untested by me and should be exercised on a
   device with a real login.
+
+## Deliberately out of scope (not implemented)
+
+Stated plainly so nothing is assumed to work that does not:
+
+* **Forwarding** — a forwarded message *shows* "Forwarded from …", but there is no forward action;
+  you cannot re-send someone else's message to another chat.
+* **Recording** — no voice-note or video-note capture. Sending is limited to files picked through
+  the system document picker, one at a time; received voice/video notes do play.
+* **Secret chats** — not offered (TDLib is configured without them, unchanged from before).
+* **In-conversation search** — only global search exists; there is no "find in this chat".
+* **Multi-account / account switching** — one session, as before.
+* **Rich content creation** — polls, quizzes, locations, contacts, dice and stickers can be
+  *received* (rendered as their real text/preview, or an explicit unsupported line); none can be
+  *composed* in-app.
+* **Message editing history, scheduled/silent sending, send-as** — not exposed.
+* **Group/channel administration** — beyond pin, mute, mark read/unread and archive there are no
+  admin tools (member management, invites, slow mode).
