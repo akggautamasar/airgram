@@ -1,8 +1,8 @@
 # AirGram (Android)
 
-Native Android client for your Telegram chats: log in with your phone number, see every chat,
-and **stream** videos / music / PDFs / photos straight from Telegram — no backend, no server
-deployment, nothing downloaded up front.
+Native Android client for your Telegram chats: log in with your phone number, **read and answer**
+every chat, and **stream** videos / music / PDFs / photos straight from Telegram — no backend, no
+server deployment, nothing downloaded up front.
 
 ## How it works
 
@@ -53,6 +53,17 @@ app/src/main/java/com/airbooks/app/
   NavCodec.kt         pure navigation persistence across rotation and process death
 ```
 
+## Chats, messaging & navigation
+Real Telegram conversations over the same on-device TDLib session — no second login, no backend,
+no placeholder content. Paged history (40 messages at a time, LRU-bounded cache), live updates,
+sending text and attachments, replies, edits, deletions, reactions, read receipts, presence,
+drafts, pinned/muted/archived chats, folders and global search. Navigation is five destinations
+with a bottom bar on phones and a rail on wide screens; the player adds a gesture layer
+(double-tap seek, brightness/volume swipes, swipe-to-seek preview, control lock), aspect-ratio
+cycling, split audio/subtitle pickers, a sleep timer with "end of this item" and a playback-info
+dialog that reports only real values. Design, layering and honest limits: **MESSAGING.md**
+(chats) and **STREAMING.md §6** (player/gestures).
+
 ## Known limits / ideas
 
 * Audio keeps playing in the background via a media-session service; videos/audio stream in
@@ -66,17 +77,6 @@ app/src/main/java/com/airbooks/app/
 * **Chats are real conversations**: send text and attachments, receive live, page through history,
   reply, edit/delete your own messages, react, see read ticks and presence. See MESSAGING.md.
 * Image viewer supports pinch-zoom/pan and double-tap zoom.
-
-## Chats, messaging & navigation
-Real Telegram conversations over the same on-device TDLib session — no second login, no backend,
-no placeholder content. Paged history (40 messages at a time, LRU-bounded cache), live updates,
-sending text and attachments, replies, edits, deletions, reactions, read receipts, presence,
-drafts, pinned/muted/archived chats, folders and global search. Navigation is five destinations
-with a bottom bar on phones and a rail on wide screens; the player adds a gesture layer
-(double-tap seek, brightness/volume swipes, swipe-to-seek preview, control lock), aspect-ratio
-cycling, split audio/subtitle pickers, a sleep timer with "end of this item" and a playback-info
-dialog that reports only real values. Design, layering and honest limits: **MESSAGING.md**
-(chats) and **STREAMING.md §6** (player/gestures).
 
 ## Downloads & speed programme
 Managed downloads (queue, concurrency profiles, pause/resume/retry, background `dataSync`
