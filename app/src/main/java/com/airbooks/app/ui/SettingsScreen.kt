@@ -112,7 +112,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Text("Streaming read-ahead cap (Normal)", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${Prefs.prefetchMb} MB · Low Data mode always uses a smaller window",
+                        "${Prefs.prefetchMb} MB · Low Data and Extreme Low Data use their own bounded windows",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -124,7 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 SwitchRow("Mobile-data warning", "Warn in the player when streaming on mobile data", Prefs.mobileDataWarning) {
                     Prefs.updateMobileDataWarning(it)
                 }
-                SwitchRow("Suspend thumbnails in Low Data", "While Low Data playback is active, stop thumbnail/preview work", Prefs.suspendThumbsLowData) {
+                SwitchRow("Suspend thumbnails in data-saving modes", "While Low Data or Extreme Low Data playback is active, stop thumbnail/preview work", Prefs.suspendThumbsLowData) {
                     Prefs.updateSuspendThumbsLowData(it)
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -240,10 +240,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                                     Text(choice, style = MaterialTheme.typography.titleMedium)
                                     if (dialog == "Default video mode") {
                                         Text(
-                                            if (choice == StreamingMode.NORMAL.label) {
-                                                "Original quality, larger read-ahead for smooth playback."
-                                            } else {
-                                                "Faster start, smaller read-ahead, less data on slow networks."
+                                            when (choice) {
+                                                StreamingMode.NORMAL.label ->
+                                                    "Original quality, responsive start, larger read-ahead for smooth playback."
+                                                StreamingMode.LOW_DATA.label ->
+                                                    "Smaller read-ahead, minimal prefetch and thumbnails, less data on slow networks."
+                                                else ->
+                                                    "For very slow or unstable links: deepest prebuffering (also while paused), playback starts only once a large buffer is ready."
                                             },
                                             style = MaterialTheme.typography.bodySmall,
                                         )
@@ -300,6 +303,11 @@ fun SettingsScreen(onBack: () -> Unit) {
                             appendLine("Active file ID: ${StreamingRuntime.activeFileId}")
                             appendLine("Estimated throughput: ${if (kbps > 0) "$kbps kbps" else "no samples yet"} (${StreamingRuntime.estimator.sampleCount} samples)")
                             appendLine("Rebuffers this session: ${StreamingRuntime.rebufferCount}")
+                            appendLine("Media bitrate estimate: ${if (StreamingRuntime.mediaBitrateBps > 0) "${StreamingRuntime.mediaBitrateBps / 1000} kbps" else "unknown"}")
+                            appendLine("User-paused: ${StreamingRuntime.userPaused} · start-gate hold: ${StreamingRuntime.internalHold}")
+                            appendLine("Pause-prebuffered ahead: ${fmtSize(StreamingRuntime.lastPrebufferAheadBytes)}")
+                            val pfx = StreamingRuntime.loadedPrefix
+                            appendLine("Loaded prefix: ${fmtSize(pfx.end)} of ${fmtSize(pfx.fileSize)} (${(pfx.fraction * 100).toInt()}%)${if (pfx.completed) " · complete" else ""}")
                             appendLine("Last streaming error: ${StreamingRuntime.lastError ?: "none"}")
                             appendLine("Telegram connection: ${connection.ifBlank { "connected" }}")
                             appendLine("Metered connection: ${Tg.isMetered()}")

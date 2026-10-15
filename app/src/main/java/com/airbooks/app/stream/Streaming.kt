@@ -1,5 +1,6 @@
 package com.airbooks.app.stream
 
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -15,6 +16,7 @@ import kotlin.math.min
 enum class StreamingMode(val label: String) {
     NORMAL("Normal Streaming"),
     LOW_DATA("Low Data Streaming"),
+    EXTREME_LOW_DATA("Extreme Low Data"),
 }
 
 /** All tunable thresholds live here instead of being scattered as magic numbers. */
@@ -29,14 +31,37 @@ object StreamingConfig {
     const val LOW_WINDOW_MED_BYTES = 4L * 1024 * 1024
     const val LOW_WINDOW_MIN_BYTES = 2L * 1024 * 1024
 
+    // Extreme Low Data: continuity over startup. Biggest bounded windows, most patience.
+    const val EXTREME_WINDOW_MAX_BYTES = 48L * 1024 * 1024
+    const val EXTREME_WINDOW_MED_BYTES = 24L * 1024 * 1024
+    const val EXTREME_WINDOW_MIN_BYTES = 12L * 1024 * 1024
+
     const val MAX_RETRIES_NORMAL = 5
     const val MAX_RETRIES_LOW_DATA = 4
+    const val MAX_RETRIES_EXTREME = 6
     const val BACKOFF_BASE_NORMAL_MS = 400L
     const val BACKOFF_BASE_LOW_DATA_MS = 1_000L
+    const val BACKOFF_BASE_EXTREME_MS = 1_500L
     const val BACKOFF_CAP_MS = 30_000L
 
     const val STALL_TIMEOUT_NORMAL_MS = 60_000L
     const val STALL_TIMEOUT_LOW_DATA_MS = 90_000L
+    const val STALL_TIMEOUT_EXTREME_MS = 150_000L
+
+    // Pause-to-buffer: bounded prebuffer-ahead targets per mode (Extreme = largest).
+    // Byte caps bound disk/heap; second caps adapt the target to the media bitrate;
+    // the throughput check keeps the target reachable on the measured link.
+    const val PAUSE_PREBUFFER_NORMAL_BYTES = 24L * 1024 * 1024
+    const val PAUSE_PREBUFFER_LOW_BYTES = 6L * 1024 * 1024
+    const val PAUSE_PREBUFFER_EXTREME_BYTES = 96L * 1024 * 1024
+    const val PAUSE_PREBUFFER_NORMAL_SEC = 90L
+    const val PAUSE_PREBUFFER_LOW_SEC = 30L
+    const val PAUSE_PREBUFFER_EXTREME_SEC = 300L
+
+    // TDLib priority for pause-time prebuffering: below the active playback window (32)
+    // and interleaved with the download scheduler's 8..30 range, so queued user downloads
+    // keep their share of TDLib's byte budget while the player is paused.
+    const val PREBUFFER_PRIORITY = 20
 
     // Throughput bands (bits/s) used when the media bitrate is unknown.
     const val BAND_LOW_MAX_BPS = 500_000.0
@@ -72,6 +97,25 @@ class ThroughputEstimator(private val alpha: Double = 0.25) {
     }
 }
 
+/**
+ * The genuinely downloaded contiguous prefix TDLib reports for the streamed file
+ * (`local.downloadOffset + downloadedPrefixSize`, or the whole file when complete).
+ * This is the ONLY loaded region AirGram can honestly claim: TDLib exposes one
+ * contiguous prefix per file, never arbitrary independent segments.
+ */
+data class LoadedPrefix(
+    val fileId: Int,
+    val start: Long,
+    val end: Long,
+    val fileSize: Long,
+    val completed: Boolean,
+) {
+    /** 0..1 fraction of the file downloaded in the current window. */
+    val fraction: Float get() = if (fileSize > 0) (end.toFloat() / fileSize).coerceIn(0f, 1f) else 0f
+
+    companion object { val EMPTY = LoadedPrefix(0, 0, 0, 0, false) }
+}
+
 /** Shared, process-wide diagnostics so the player/settings can show what streaming is doing. */
 object StreamingRuntime {
     val estimator = ThroughputEstimator()
@@ -80,6 +124,78 @@ object StreamingRuntime {
     @Volatile var activeFileId: Int = 0
     @Volatile var rebufferCount: Int = 0
     @Volatile var lastError: String? = null
+
+    // ── Pause-to-buffer & seek-bar state (written by TdDataSource / PlaybackService) ──
+    /** True while the USER has paused (never while the extreme-mode start gate holds). */
+    @Volatile var userPaused: Boolean = false
+    /** True while the service holds playback to grow the buffer (extreme mode gate). */
+    @Volatile var internalHold: Boolean = false
+    /** Average media bitrate (bits/s) from size/duration; 0 = unknown. Feeds policy targets. */
+    @Volatile var mediaBitrateBps: Long = 0
+    /** Live contiguous downloaded prefix for the active stream (seek-bar loaded track). */
+    @Volatile var loadedPrefix: LoadedPrefix = LoadedPrefix.EMPTY
+    /** Bytes downloaded ahead of the read position (diagnostics / prebuffer status). */
+    @Volatile var lastPrebufferAheadBytes: Long = 0
+}
+
+/**
+ * Bounded pause-to-buffer targets. While the user has paused, the active data source keeps
+ * advancing TDLib's window until this many bytes ahead of the playhead are available — then
+ * stops and only resumes fetching if the buffer falls below the target again.
+ *
+ * The target adapts: byte cap per mode (Extreme > Normal > Low Data), converted to a time cap
+ * when the media bitrate is known, and further limited to what the measured throughput can
+ * actually deliver, so a hopeless link never churns through a huge target.
+ */
+object Prebuffer {
+    fun targetBytes(
+        mode: StreamingMode,
+        mediaBitrateBps: Long, // 0 = unknown
+        throughputBps: Double, // EWMA estimate; <= 0 = unknown
+        fileSizeBytes: Long, // 0 = unknown
+        maxWindowBytes: Long, // user "read-ahead cap (Normal)" slider; 0 = unset
+    ): Long {
+        val capBytes = when (mode) {
+            StreamingMode.LOW_DATA -> StreamingConfig.PAUSE_PREBUFFER_LOW_BYTES
+            StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.PAUSE_PREBUFFER_EXTREME_BYTES
+            StreamingMode.NORMAL ->
+                if (maxWindowBytes > 0) min(StreamingConfig.PAUSE_PREBUFFER_NORMAL_BYTES, maxWindowBytes)
+                else StreamingConfig.PAUSE_PREBUFFER_NORMAL_BYTES
+        }
+        val capSec = when (mode) {
+            StreamingMode.LOW_DATA -> StreamingConfig.PAUSE_PREBUFFER_LOW_SEC
+            StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.PAUSE_PREBUFFER_EXTREME_SEC
+            StreamingMode.NORMAL -> StreamingConfig.PAUSE_PREBUFFER_NORMAL_SEC
+        }
+        val floorBytes = when (mode) {
+            StreamingMode.LOW_DATA -> StreamingConfig.RANGE_ALIGN_BYTES
+            StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.EXTREME_WINDOW_MIN_BYTES
+            StreamingMode.NORMAL -> StreamingConfig.NORMAL_WINDOW_MIN_BYTES
+        }
+        var t = capBytes
+        if (mediaBitrateBps > 0) t = min(t, (mediaBitrateBps / 8.0 * capSec).toLong())
+        // Reachability: with 4x head-room over capSec, a target the link cannot deliver in
+        // a reasonable time is cut down instead of being chased forever.
+        if (throughputBps > 0) t = min(t, (throughputBps / 8.0 * capSec * 4).toLong())
+        t = max(t, floorBytes)
+        if (fileSizeBytes > 0) t = min(t, fileSizeBytes)
+        return t.coerceAtLeast(0)
+    }
+}
+
+/**
+ * Extreme Low Data start/resume gate: pure predicates the playback service evaluates ~1 Hz.
+ * Playback is HELD (internally paused — never a user pause) while the buffer ahead of the
+ * playhead is below the mode's start target, and released once the resume target is reached,
+ * the stream ends, or the user leaves extreme mode. Intentional user pauses are handled
+ * separately and are never overridden.
+ */
+object StartGate {
+    fun shouldHoldStart(mode: StreamingMode, aheadBufferedMs: Long, startTargetMs: Long, atEnd: Boolean): Boolean =
+        mode == StreamingMode.EXTREME_LOW_DATA && !atEnd && aheadBufferedMs < startTargetMs
+
+    fun shouldReleaseHold(mode: StreamingMode, aheadBufferedMs: Long, resumeTargetMs: Long, atEnd: Boolean): Boolean =
+        mode != StreamingMode.EXTREME_LOW_DATA || atEnd || aheadBufferedMs >= resumeTargetMs
 }
 
 /**
@@ -119,6 +235,19 @@ class RangeTracker {
         requestedEnd = -1L
     }
 
+    /**
+     * Adopt an externally planned range (the pause-time prebuffer pump extends the window
+     * beyond what reads request). Returns true only when the range differs from the window
+     * already in flight, so the pump never issues a duplicate request.
+     */
+    @Synchronized
+    fun adoptOrPlan(start: Long, end: Long): Boolean {
+        if (start == requestedStart && end == requestedEnd) return false
+        requestedStart = start
+        requestedEnd = end
+        return true
+    }
+
     @Synchronized
     fun covers(position: Long): Boolean =
         requestedStart >= 0 && position in requestedStart until requestedEnd
@@ -127,22 +256,26 @@ class RangeTracker {
 /** Bounded exponential backoff: delay grows per attempt but never exceeds the cap. */
 object Backoff {
     fun delayMs(attempt: Int, mode: StreamingMode): Long {
-        val base = if (mode == StreamingMode.LOW_DATA) {
-            StreamingConfig.BACKOFF_BASE_LOW_DATA_MS
-        } else {
-            StreamingConfig.BACKOFF_BASE_NORMAL_MS
+        val base = when (mode) {
+            StreamingMode.LOW_DATA -> StreamingConfig.BACKOFF_BASE_LOW_DATA_MS
+            StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.BACKOFF_BASE_EXTREME_MS
+            StreamingMode.NORMAL -> StreamingConfig.BACKOFF_BASE_NORMAL_MS
         }
         val shift = attempt.coerceIn(0, 10)
         return min(StreamingConfig.BACKOFF_CAP_MS, base shl shift)
     }
 
-    fun maxRetries(mode: StreamingMode): Int =
-        if (mode == StreamingMode.LOW_DATA) StreamingConfig.MAX_RETRIES_LOW_DATA
-        else StreamingConfig.MAX_RETRIES_NORMAL
+    fun maxRetries(mode: StreamingMode): Int = when (mode) {
+        StreamingMode.LOW_DATA -> StreamingConfig.MAX_RETRIES_LOW_DATA
+        StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.MAX_RETRIES_EXTREME
+        StreamingMode.NORMAL -> StreamingConfig.MAX_RETRIES_NORMAL
+    }
 
-    fun stallTimeoutMs(mode: StreamingMode): Long =
-        if (mode == StreamingMode.LOW_DATA) StreamingConfig.STALL_TIMEOUT_LOW_DATA_MS
-        else StreamingConfig.STALL_TIMEOUT_NORMAL_MS
+    fun stallTimeoutMs(mode: StreamingMode): Long = when (mode) {
+        StreamingMode.LOW_DATA -> StreamingConfig.STALL_TIMEOUT_LOW_DATA_MS
+        StreamingMode.EXTREME_LOW_DATA -> StreamingConfig.STALL_TIMEOUT_EXTREME_MS
+        StreamingMode.NORMAL -> StreamingConfig.STALL_TIMEOUT_NORMAL_MS
+    }
 }
 
 enum class ThroughputBand { UNKNOWN, LOW, MEDIUM, HIGH }
@@ -157,6 +290,7 @@ data class PolicyInput(
     val mode: StreamingMode,
     val hasLowerQualityVariant: Boolean,
     val maxWindowBytes: Long, // user cap (Settings "streaming prefetch")
+    val fileSizeBytes: Long = 0, // 0 = unknown; bounds the pause-prebuffer target
 )
 
 data class PolicyDecision(
@@ -169,6 +303,8 @@ data class PolicyDecision(
     val maxRetries: Int,
     val preferLowerVariant: Boolean,
     val allowBackgroundPrefetch: Boolean,
+    /** Bounded bytes to keep fetching ahead of the playhead while the USER has paused. */
+    val pausePrebufferBytes: Long,
     val explanation: String,
 )
 
@@ -185,17 +321,24 @@ class PlaybackPolicy {
     @Synchronized
     fun decide(input: PolicyInput): PolicyDecision {
         band = nextBand(band, input)
-        val low = input.mode == StreamingMode.LOW_DATA
         // Repeated rebuffering buys extra protection, but bounded (never grows without limit).
         val rebufferPenalty = min(input.rebufferCount, 4).toLong()
 
-        val (minB, maxB, startB, reB, prefetch) = when {
-            low -> when (band) {
+        val (minB, maxB, startB, reB, prefetch) = when (input.mode) {
+            StreamingMode.LOW_DATA -> when (band) {
                 ThroughputBand.HIGH -> longArrayOf(8_000, 30_000, 750, 1_500, StreamingConfig.LOW_WINDOW_MAX_BYTES)
                 ThroughputBand.MEDIUM -> longArrayOf(10_000, 30_000, 1_000, 2_500, StreamingConfig.LOW_WINDOW_MED_BYTES)
                 else -> longArrayOf(12_000, 45_000, 1_250, 4_000 + rebufferPenalty * 500, StreamingConfig.LOW_WINDOW_MIN_BYTES)
             }
-            else -> when (band) {
+            // Extreme Low Data: continuity over startup. Playback starts/resumes only with a
+            // deep buffer (6-10 s), buffer ceilings are the largest, windows are the widest,
+            // and background prefetch (pause-to-buffer) is ALWAYS allowed — that is the mode.
+            StreamingMode.EXTREME_LOW_DATA -> when (band) {
+                ThroughputBand.HIGH -> longArrayOf(30_000, 180_000, 6_000, 10_000, StreamingConfig.EXTREME_WINDOW_MAX_BYTES)
+                ThroughputBand.MEDIUM -> longArrayOf(40_000, 180_000, 8_000, 12_000, StreamingConfig.EXTREME_WINDOW_MED_BYTES)
+                else -> longArrayOf(50_000, 240_000, 10_000, 15_000 + rebufferPenalty * 1_500, StreamingConfig.EXTREME_WINDOW_MIN_BYTES)
+            }
+            StreamingMode.NORMAL -> when (band) {
                 ThroughputBand.HIGH -> longArrayOf(15_000, 90_000, 1_500, 3_000, StreamingConfig.NORMAL_WINDOW_MAX_BYTES)
                 ThroughputBand.MEDIUM -> longArrayOf(20_000, 90_000, 2_000, 4_000, StreamingConfig.NORMAL_WINDOW_MED_BYTES)
                 else -> longArrayOf(25_000, 120_000, 2_500, 5_000 + rebufferPenalty * 1_000, StreamingConfig.NORMAL_WINDOW_MIN_BYTES)
@@ -211,8 +354,19 @@ class PlaybackPolicy {
             prefetchBytes = cappedPrefetch,
             maxRetries = Backoff.maxRetries(input.mode),
             preferLowerVariant = input.hasLowerQualityVariant &&
-                (low || band == ThroughputBand.LOW),
-            allowBackgroundPrefetch = !low && band != ThroughputBand.LOW,
+                (input.mode != StreamingMode.NORMAL || band == ThroughputBand.LOW),
+            allowBackgroundPrefetch = when (input.mode) {
+                StreamingMode.EXTREME_LOW_DATA -> true
+                StreamingMode.LOW_DATA -> false
+                StreamingMode.NORMAL -> band != ThroughputBand.LOW
+            },
+            pausePrebufferBytes = Prebuffer.targetBytes(
+                mode = input.mode,
+                mediaBitrateBps = input.mediaBitrateBps,
+                throughputBps = input.throughputBps,
+                fileSizeBytes = input.fileSizeBytes,
+                maxWindowBytes = input.maxWindowBytes,
+            ),
             explanation = "mode=${input.mode.label} band=$band throughput=${input.throughputBps.toLong()}bps " +
                 "bitrate=${input.mediaBitrateBps}bps buffered=${input.bufferedMs}ms rebuffers=${input.rebufferCount}",
         )

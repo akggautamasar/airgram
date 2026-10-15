@@ -11,18 +11,29 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -30,12 +41,14 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,7 +57,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -219,6 +234,10 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         StreamingRuntime.playbackActive = true
         StreamingRuntime.activeMode = mode
         StreamingRuntime.activeFileId = item.fileId
+        // Average bitrate from real message metadata (bytes/second); the 250 ms poll refines
+        // it from the extracted duration once the player reports one.
+        StreamingRuntime.mediaBitrateBps =
+            if (item.duration > 0 && item.size > 0) item.size * 8 / item.duration.toLong() else 0
         val alreadyLoaded = c.mediaItemCount == items.size &&
             (0 until c.mediaItemCount).all { c.getMediaItemAt(it).mediaId == items[it].key }
         if (!alreadyLoaded) {
@@ -239,6 +258,11 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         var tick = 0
         while (true) {
             aheadMs = (c.bufferedPosition - c.currentPosition).coerceAtLeast(0)
+            // Average media bitrate from real size/duration: feeds the policy's time-based
+            // band edges and pause-prebuffer targets (Telegram reports no bitrate itself).
+            if (c.duration > 0 && item.size > 0) {
+                StreamingRuntime.mediaBitrateBps = item.size * 8000 / c.duration
+            }
             savePosition(c)
             // Feed the Continue rail every 5 s without hammering SharedPreferences.
             if (++tick % 5 == 0 && c.currentPosition > 0) {
@@ -261,6 +285,34 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
         if (sleepMin > 0) {
             delay(sleepMin * 60_000L)
             controller?.pause()
+        }
+    }
+
+    // ── Video controls state (250 ms poll: seek bar must track the loaded prefix smoothly,
+    //    including while paused, when the TDLib window keeps growing up to its bounded target) ──
+    var posMs by remember { mutableLongStateOf(0L) }
+    var durMs by remember { mutableLongStateOf(0L) }
+    var playing by remember { mutableStateOf(false) }
+    var loadedFrac by remember { mutableFloatStateOf(0f) }
+    var uiUserPaused by remember { mutableStateOf(false) }
+    var uiHold by remember { mutableStateOf(false) }
+    var aheadBytes by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(controller, item.fileId) {
+        val c = controller ?: return@LaunchedEffect
+        while (true) {
+            posMs = c.currentPosition
+            durMs = c.duration.coerceAtLeast(0L)
+            playing = c.isPlaying
+            // Loaded track = max(Media3 buffered time, real TDLib contiguous prefix mapped to
+            // time linearly via file size). Never fabricates ranges: both inputs are real.
+            val timeFrac = if (durMs > 0) (c.bufferedPosition.toFloat() / durMs).coerceIn(0f, 1f) else 0f
+            val pfx = StreamingRuntime.loadedPrefix
+            val byteFrac = if (pfx.fileId == item.fileId && pfx.fileSize > 0) pfx.fraction else 0f
+            loadedFrac = maxOf(timeFrac, byteFrac)
+            uiUserPaused = StreamingRuntime.userPaused
+            uiHold = StreamingRuntime.internalHold
+            aheadBytes = StreamingRuntime.lastPrebufferAheadBytes
+            delay(250)
         }
     }
 
@@ -292,6 +344,10 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                 factory = { c ->
                     PlayerView(c).apply {
                         keepScreenOn = true
+                        // Audio keeps the built-in controller (prev/next + notification parity).
+                        // Video uses the custom Compose controls below, whose seek bar shows the
+                        // REAL TDLib loaded prefix (YouTube-style) instead of only Media3's buffer.
+                        useController = isAudio
                         if (isAudio) {
                             controllerShowTimeoutMs = 0
                             controllerHideOnTouch = false
@@ -305,13 +361,29 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
             )
         }
 
+        // Video: tap anywhere toggles the custom controls; 250 ms state poll drives the seek bar.
+        if (!isAudio) {
+            Box(
+                Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures(onTap = { controlsVisible = !controlsVisible })
+                },
+            )
+        }
+
         if (isAudio) {
             // Artwork + metadata (no fake video track is created for audio files).
             Column(
                 Modifier.align(Alignment.Center).padding(bottom = 110.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                TgImage(item.thumbId, item.mini, Modifier.size(180.dp).clip(RoundedCornerShape(20.dp)), enabled = Prefs.autoThumbs)
+                // In Low Data / Extreme Low Data the artwork network fetch is suspended
+                // (the inline mini-thumbnail still shows); notification art uses in-memory
+                // bytes only, so no speculative requests happen in data-saving modes.
+                TgImage(
+                    item.thumbId, item.mini,
+                    Modifier.size(180.dp).clip(RoundedCornerShape(20.dp)),
+                    enabled = Prefs.autoThumbs && !(Prefs.suspendThumbsLowData && mode != StreamingMode.NORMAL),
+                )
                 Text(
                     if (item.trackTitle.isNotBlank()) item.trackTitle else item.name,
                     color = Color.White,
@@ -338,7 +410,7 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         Text(
                             "Buffered +${aheadMs / 1000}s · ${fmtSize(item.size)}" +
                                 (if (kbps > 0) " · ~$kbps kbps" else "") +
-                                (if (mode == StreamingMode.LOW_DATA) " · Low Data" else ""),
+                                (if (mode != StreamingMode.NORMAL) " · ${mode.label}" else ""),
                             color = Color(0xCCFFFFFF), fontSize = 11.sp,
                         )
                     }
@@ -402,7 +474,10 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(start = 8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 8.dp).horizontalScroll(rememberScrollState()),
+                ) {
                     FilterChip(
                         selected = mode == StreamingMode.NORMAL,
                         onClick = { applyMode(StreamingMode.NORMAL) },
@@ -412,6 +487,11 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         selected = mode == StreamingMode.LOW_DATA,
                         onClick = { applyMode(StreamingMode.LOW_DATA) },
                         label = { Text("Low Data Streaming", fontSize = 11.sp) },
+                    )
+                    FilterChip(
+                        selected = mode == StreamingMode.EXTREME_LOW_DATA,
+                        onClick = { applyMode(StreamingMode.EXTREME_LOW_DATA) },
+                        label = { Text(StreamingMode.EXTREME_LOW_DATA.label, fontSize = 11.sp) },
                     )
                 }
                 if (metered && Prefs.mobileDataWarning && !warnDismissed && mode == StreamingMode.NORMAL) {
@@ -426,6 +506,58 @@ fun PlayerScreen(item: Media, queue: List<Media>, chatTitle: String, onBack: () 
                         )
                         TextButton(onClick = { applyMode(StreamingMode.LOW_DATA) }) { Text("Switch", color = Color.White) }
                         TextButton(onClick = { warnDismissed = true }) { Text("Dismiss", color = Color.White) }
+                    }
+                }
+            }
+        }
+
+        // Video: custom bottom controls — YouTube-style timeline with three real tracks.
+        if (!isAudio && controller != null && (controlsVisible || uiHold || uiUserPaused)) {
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                ThreeTrackSeekBar(
+                    playedFrac = if (durMs > 0) (posMs.toFloat() / durMs).coerceIn(0f, 1f) else 0f,
+                    loadedFrac = loadedFrac,
+                    onSeek = { f -> if (durMs > 0) controller?.seekTo((f * durMs).toLong()) },
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = {
+                        val c = controller ?: return@IconButton
+                        if (c.isPlaying) c.pause() else c.play()
+                    }) {
+                        Icon(
+                            if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            if (playing) "Pause" else "Play",
+                            tint = Color.White,
+                        )
+                    }
+                    if (items.size > 1) {
+                        IconButton(onClick = { controller?.seekToPrevious() }) {
+                            Icon(Icons.Filled.SkipPrevious, "Previous", tint = Color.White)
+                        }
+                        IconButton(onClick = { controller?.seekToNext() }) {
+                            Icon(Icons.Filled.SkipNext, "Next", tint = Color.White)
+                        }
+                    }
+                    Text(
+                        "${fmtDur((posMs / 1000).toInt())} / ${fmtDur((durMs / 1000).toInt())}",
+                        color = Color.White, fontSize = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    // Pause-to-buffer / start-gate status: honest, from real runtime counters.
+                    when {
+                        uiHold -> Text(
+                            "Building buffer… +${aheadMs / 1000}s",
+                            color = Color(0xCCFFFFFF), fontSize = 11.sp,
+                        )
+                        uiUserPaused && aheadBytes > 0 -> Text(
+                            "Prebuffered ${fmtSize(aheadBytes)} ahead",
+                            color = Color(0xCCFFFFFF), fontSize = 11.sp,
+                        )
                     }
                 }
             }
@@ -468,6 +600,59 @@ private data class TrackEntry(
     val label: String,
     val selected: Boolean,
 )
+
+/**
+ * YouTube-style timeline with three honest tracks:
+ *  - **played** (theme primary) — media already played (real player position);
+ *  - **loaded** (translucent white) — media genuinely available ahead: max(Media3
+ *    `bufferedPosition`, TDLib's real contiguous downloaded prefix mapped linearly to time);
+ *  - **unloaded** (faint white) — bytes not yet downloaded.
+ * Grows while paused, because the pause-prebuffer pump keeps advancing the TDLib window.
+ * Tap or drag to seek (drag scrubs locally, seeks on release). Sits on the always-black
+ * player background, so the fixed whites are legible in both light and dark themes.
+ */
+@Composable
+private fun ThreeTrackSeekBar(
+    playedFrac: Float,
+    loadedFrac: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragF by remember { mutableStateOf<Float?>(null) }
+    BoxWithConstraints(
+        modifier.fillMaxWidth().height(36.dp)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { off -> onSeek((off.x / size.width).coerceIn(0f, 1f)) })
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { off -> dragF = (off.x / size.width).coerceIn(0f, 1f) },
+                    onDragEnd = { dragF?.let(onSeek); dragF = null },
+                    onDragCancel = { dragF = null },
+                ) { change, _ ->
+                    change.consume()
+                    dragF = (change.position.x / size.width).coerceIn(0f, 1f)
+                }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        val pf = (dragF ?: playedFrac).coerceIn(0f, 1f)
+        val lf = loadedFrac.coerceIn(0f, 1f)
+        Box(
+            Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
+                .background(Color.White.copy(alpha = 0.18f)), // unloaded track
+        ) {
+            Box(Modifier.fillMaxWidth(lf).height(4.dp).background(Color.White.copy(alpha = 0.45f))) // loaded
+            Box(Modifier.fillMaxWidth(pf).height(4.dp).background(MaterialTheme.colorScheme.primary)) // played
+        }
+        val knobStart = (maxWidth * pf) - 6.dp
+        Box(
+            Modifier.padding(start = if (knobStart > 0.dp) knobStart else 0.dp)
+                .size(12.dp).clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.primary),
+        )
+    }
+}
 
 /** Picture-in-picture for video (Android 8+); no-op elsewhere. Playback keeps running. */
 private fun android.app.Activity.enterPip() {

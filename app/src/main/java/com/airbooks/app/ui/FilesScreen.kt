@@ -85,9 +85,9 @@ fun FilesScreen(
     LaunchedEffect(query) { delay(450); activeQuery = query.trim() }
 
     val st = remember(chatId, section, activeQuery) { Repo.state(chatId, section, activeQuery) }
-    // Low Data playback suspends thumbnail/preview work; Wi-Fi-only prefetch blocks it on mobile data.
+    // Low Data / Extreme Low Data playback suspends thumbnail/preview work; Wi-Fi-only prefetch blocks it on mobile data.
     val liveMode = if (StreamingRuntime.playbackActive) StreamingRuntime.activeMode else Prefs.effectiveMode()
-    val lowDataSuspends = liveMode == StreamingMode.LOW_DATA &&
+    val lowDataSuspends = liveMode != StreamingMode.NORMAL &&
         Prefs.suspendThumbsLowData && StreamingRuntime.playbackActive
     val thumbsOn = Prefs.autoThumbs && !lowDataSuspends && !(Prefs.wifiOnlyPrefetch && Tg.isMetered())
     val scope = rememberCoroutineScope()

@@ -9,11 +9,14 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import com.airbooks.app.Prefs
 import com.airbooks.app.stream.Backoff
+import com.airbooks.app.stream.LoadedPrefix
 import com.airbooks.app.stream.PlaybackPolicy
 import com.airbooks.app.stream.PolicyInput
 import com.airbooks.app.stream.RangeTracker
+import com.airbooks.app.stream.StreamingConfig
 import com.airbooks.app.stream.StreamingMode
 import com.airbooks.app.stream.StreamingRuntime
+import org.drinkless.tdlib.TdApi
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.io.RandomAccessFile
@@ -67,6 +70,16 @@ class TdDataSource(
     private var raf: RandomAccessFile? = null
     private var rafPath: String? = null
 
+    // Registry hooks so PlaybackService can reach the ACTIVE source for the ~1 Hz
+    // pause-prebuffer tick without touching ExoPlayer internals.
+    internal var onOpened: ((TdDataSource) -> Unit)? = null
+    internal var onClosed: ((TdDataSource) -> Unit)? = null
+
+    // Pause-pump backoff state (only touched from the single-threaded service tick).
+    private var pumpAttempt = 0
+    private var pumpLastHave = -1L
+    private var pumpNextKick = 0L
+
     override fun open(dataSpec: DataSpec): Long = guard { openInner(dataSpec) }
 
     private fun openInner(dataSpec: DataSpec): Long {
@@ -94,6 +107,9 @@ class TdDataSource(
         }
 
         ranges.invalidate()
+        pumpAttempt = 0
+        pumpLastHave = -1L
+        pumpNextKick = 0L
         Tg.beginStream(fileId)
         opened = true
         try {
@@ -103,6 +119,8 @@ class TdDataSource(
             opened = false
             throw e
         }
+        onOpened?.invoke(this)
+        Tg.peekFile(fileId)?.local?.let { publishPrefix(it) }
         transferStarted(dataSpec)
         return remaining
     }
@@ -125,6 +143,7 @@ class TdDataSource(
             // What we actually sustained while fetching this chunk feeds the shared estimator.
             StreamingRuntime.estimator.addSample(n.toLong(), waited)
         }
+        Tg.peekFile(fileId)?.local?.let { publishPrefix(it) }
         pos += n
         remaining -= n
         bytesTransferred(n)
@@ -150,6 +169,7 @@ class TdDataSource(
             uri = null
             if (opened) {
                 opened = false
+                onClosed?.invoke(this)
                 // Stops the TDLib download only when no other reader still needs this file.
                 Tg.endStream(fileId)
                 transferEnded()
@@ -184,22 +204,83 @@ class TdDataSource(
     /** Request the policy-sized window around the read position, de-duplicated by [ranges]. */
     private fun ensureWindow() {
         if (closed) return
-        val mode = modeProvider()
-        val decision = policy.decide(
-            PolicyInput(
-                throughputBps = StreamingRuntime.estimator.ewmaBps,
-                avgLatencyMs = 0L,
-                mediaBitrateBps = 0, // Telegram exposes no bitrate; size/duration only via MediaItem layer
-                bufferedMs = 0L,
-                rebufferCount = StreamingRuntime.rebufferCount,
-                positionMs = 0L,
-                mode = mode,
-                hasLowerQualityVariant = false, // one fixed-quality Telegram file: never faked
-                maxWindowBytes = Prefs.prefetchMb * MB,
-            )
-        )
+        val decision = policy.decide(currentInput())
         val range = ranges.plan(pos, decision.prefetchBytes, size) ?: return
         Tg.download(fileId, priority = 32, offset = range.first, limit = range.last - range.first + 1)
+    }
+
+    private fun currentInput() = PolicyInput(
+        throughputBps = StreamingRuntime.estimator.ewmaBps,
+        avgLatencyMs = 0L,
+        // Average bitrate computed by the player layer from size/duration (Telegram exposes
+        // none before extraction); 0 = unknown, policy then falls back to byte caps.
+        mediaBitrateBps = StreamingRuntime.mediaBitrateBps,
+        bufferedMs = 0L,
+        rebufferCount = StreamingRuntime.rebufferCount,
+        positionMs = 0L,
+        mode = modeProvider(),
+        hasLowerQualityVariant = false, // one fixed-quality Telegram file: never faked
+        maxWindowBytes = Prefs.prefetchMb * MB,
+        fileSizeBytes = size,
+    )
+
+    /** Publish the REAL contiguous downloaded prefix for the seek-bar loaded track. */
+    private fun publishPrefix(l: TdApi.LocalFile) {
+        val end = if (l.isDownloadingCompleted) size else l.downloadOffset + l.downloadedPrefixSize
+        StreamingRuntime.loadedPrefix = LoadedPrefix(
+            fileId = fileId,
+            start = l.downloadOffset,
+            end = end.coerceIn(0, size.coerceAtLeast(end)),
+            fileSize = size,
+            completed = l.isDownloadingCompleted,
+        )
+    }
+
+    /**
+     * Pause-to-buffer pump, called ~1 Hz by [com.airbooks.app.playback.PlaybackService].
+     *
+     * While playing, normal reads drive the window and this only republishes the prefix.
+     * While the USER has paused, it keeps advancing the TDLib window — from the bytes already
+     * downloaded, never restarting the transfer — until the mode's bounded prebuffer target is
+     * reached, then stops. Requests are de-duplicated through the same [RangeTracker] the read
+     * path uses, run at [StreamingConfig.PREBUFFER_PRIORITY] (below active playback, sharing
+     * TDLib's byte budget fairly with queued user downloads), and are always limit-bounded:
+     * no competing full-file download is ever started.
+     */
+    fun prebufferTick(userPaused: Boolean) {
+        if (closed || !opened) return
+        val f = Tg.peekFile(fileId) ?: return
+        val l = f.local
+        publishPrefix(l)
+        val have = if (l.path.isEmpty()) pos else (l.downloadOffset + l.downloadedPrefixSize).coerceAtLeast(pos)
+        StreamingRuntime.lastPrebufferAheadBytes = (have - pos).coerceAtLeast(0)
+        if (l.isDownloadingCompleted) return
+        if (!userPaused) return
+        val mode = modeProvider()
+        val decision = policy.decide(currentInput())
+        val target = decision.pausePrebufferBytes
+        val desiredEnd = minOf(size, have + target)
+        if (have >= desiredEnd) return // bounded target reached: stop until buffer falls below
+        if (l.isDownloadingActive) return // a fetch is in flight: never duplicate it
+        // Disconnection handling: if nothing progressed since the last kick, wait out a bounded
+        // exponential backoff, then force a re-issue (invalidate defeats the range de-dup once).
+        val now = SystemClock.elapsedRealtime()
+        if (have == pumpLastHave) {
+            if (now < pumpNextKick) return
+            ranges.invalidate()
+            pumpAttempt++
+        } else {
+            pumpAttempt = 0
+        }
+        pumpLastHave = have
+        val align = StreamingConfig.RANGE_ALIGN_BYTES
+        val start = have - (have % align)
+        val end = minOf(size, start + minOf(decision.prefetchBytes, desiredEnd - start))
+        if (end <= start) return
+        if (ranges.adoptOrPlan(start, end)) {
+            Tg.download(fileId, StreamingConfig.PREBUFFER_PRIORITY, start, end - start)
+        }
+        pumpNextKick = now + Backoff.delayMs(pumpAttempt, mode)
     }
 
     /**
@@ -218,6 +299,7 @@ class TdDataSource(
             if (closed) throw InterruptedIOException("Streaming closed")
             val f = Tg.cachedFile(fileId)
             val l = f.local
+            publishPrefix(l)
             if (l.path.isNotEmpty()) {
                 if (l.isDownloadingCompleted) return size - at
                 val start = l.downloadOffset
@@ -279,5 +361,14 @@ class TdDataSourceFactory(
     private val modeProvider: () -> StreamingMode = { StreamingRuntime.activeMode },
 ) : DataSource.Factory {
     private val policy = PlaybackPolicy()
-    override fun createDataSource(): DataSource = TdDataSource(modeProvider, policy)
+
+    /** The source currently serving playback (or null). Used by the pause-prebuffer tick. */
+    @Volatile
+    var current: TdDataSource? = null
+        private set
+
+    override fun createDataSource(): DataSource = TdDataSource(modeProvider, policy).also { s ->
+        s.onOpened = { current = it }
+        s.onClosed = { if (current === it) current = null }
+    }
 }

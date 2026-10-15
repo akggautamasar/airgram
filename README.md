@@ -51,11 +51,14 @@ app/src/main/java/com/airbooks/app/
 ## Known limits / ideas
 
 * Audio keeps playing in the background via a media-session service; videos/audio stream in
-  Normal or Low Data mode (player + Settings → Streaming). See STREAMING.md for the design,
-  honest limitations (no adaptive bitrate — Telegram files are single-quality) and test status.
+  three selectable modes — **Normal, Low Data and Extreme Low Data** (player chips +
+  Settings → Streaming) — with a YouTube-style played/loaded/unloaded seek-bar track and
+  pause-to-buffer prebuffering in every mode. See STREAMING.md for the design, honest
+  limitations (no adaptive bitrate — Telegram files are single-quality) and test status.
 * Playback depends on the phone's codecs (e.g. some MKV/HEVC/AC3 files); no transcoding.
-* Archived chats and chat folders are not listed yet (main list only). EPUB reader not included.
-* Image viewer has no pinch-zoom yet.
+* Archived chats and chat folders are listed; global message search, unread badges and a
+  Continue-watching rail are included. EPUB reader not included.
+* Image viewer supports pinch-zoom/pan and double-tap zoom.
 
 ## Downloads & speed programme
 Managed downloads (queue, concurrency profiles, pause/resume/retry, background `dataSync`

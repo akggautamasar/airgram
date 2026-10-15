@@ -50,19 +50,36 @@ not randomly addressable.
   download lifetime (`Tg.beginStream/endStream`) so concurrent readers are safe. Requests always
   carry an explicit `limit` — streaming never starts a competing full-file download, and nothing
   is buffered wholesale in RAM (one `RandomAccessFile`, ExoPlayer-sized chunks).
-- **Modes**: Normal = up to 32 MB window, 15–25 s min buffer / 90–120 s max, 1.5–2.5 s to start.
-  Low Data = 2–8 MB window, smaller start buffer, longer stall tolerance, fewer retries with
-  longer backoff, background prefetch and (while playing) thumbnail work suspended, bounded
-  rebuffer protection that stops growing after 4 rebuffers.
+- **Modes** (all three selectable in the player and in Settings → Default video mode, persisted
+  by enum name, unknown values fall back to Normal):
+  - **Normal** = up to 32 MB window, 15–25 s min buffer / 90–120 s max, 1.5–2.5 s to start,
+    bounded pause-prebuffer of up to 24 MB (or the user's read-ahead cap, whichever is smaller).
+  - **Low Data** = 2–8 MB window, smaller start buffer, longer stall tolerance, fewer retries with
+    longer backoff, background prefetch and (while playing) thumbnail work suspended, bounded
+    rebuffer protection that stops growing after 4 rebuffers, small 6 MB pause-prebuffer target.
+  - **Extreme Low Data** (continuity over startup, for very slow/unstable/high-latency links) =
+    12–48 MB windows, 30–50 s min buffer / 180–240 s max, playback **starts only with 6–10 s
+    already buffered** (service-level start gate), most patient recovery (6 retries, 1.5 s base
+    backoff, 150 s stall timeout), thumbnails/artwork/speculative requests suspended, and the
+    largest pause-prebuffer target (up to 96 MB / 300 s of media, adapted down by measured
+    throughput and file size). Pause-prebuffering is ALWAYS allowed in this mode — that is the
+    point of it.
 - **`playback/PlaybackService.kt`**: a `MediaSessionService` owning the single ExoPlayer;
   the UI uses a `MediaController`. Audio now plays in the background with a media notification,
   queue (previous/next), title/artist/album-cover (from Telegram audio metadata +
-  minithumbnail), and resume. Video leaving the screen stops playback; audio does not.
-- **Player UX**: immersive video, `PlayerView` controller (play/pause, seek, elapsed/remaining,
-  prev/next), playback-speed menu (persisted), Normal/Low Data selector chips, subtle
-  "· Low Data" + buffered-seconds + estimated-kbps diagnostics, audio/subtitle/video track
-  selection menu (real `TrackSelectionOverride`s), rotate button, mobile-data warning with
-  one-tap switch to Low Data, error view that retries from the last position.
+  minithumbnail), and resume. Video leaving the screen stops playback; audio does not. A ~1 Hz
+  service ticker runs the two behaviours `LoadControl` cannot express live: the **Extreme Low
+  Data start gate** (internal hold — see §2.1) and the **pause-to-buffer pump** dispatch. It
+  distinguishes an intentional user pause (`playWhenReady=false` not applied by the gate) from
+  an internal buffering hold, and never auto-resumes a user pause.
+- **Player UX**: immersive video, custom Compose video controls with the three-track
+  YouTube-style timeline (§2.1), play/pause + prev/next + elapsed/total, tap-to-toggle controls;
+  audio keeps the `PlayerView` controller (notification parity). Playback-speed menu (persisted),
+  three mode selector chips, subtle "· mode" + buffered-seconds + estimated-kbps diagnostics,
+  live "Prebuffered X MB ahead" / "Building buffer… +Ns" status, audio/subtitle/video track
+  selection menu (real `TrackSelectionOverride`s), rotate + PiP buttons, sleep timer,
+  mobile-data warning with one-tap switch to Low Data, error view that retries from the last
+  position.
 - **Settings → Streaming**: default mode, remember-last-mode, speed, read-ahead cap, Wi-Fi-only
   prefetch (blocks thumbnail/preview prefetch on metered links; playback still streams),
   mobile-data warning, suspend-thumbnails-in-Low-Data, max temporary cache with enforcement
@@ -75,6 +92,52 @@ not randomly addressable.
   size, duration, date and caption. Non-streamable files say so explicitly and only download
   after the user taps Download. PDFs still download-then-render (see limitations).
 
+## 2.1 Pause-to-buffer, the start gate, and the YouTube-style loaded track
+
+**Pause-to-buffer (all three modes).** ExoPlayer stops calling `read()` when the user pauses and
+its own buffer is full, which used to freeze the TDLib window exactly where it stood. Now:
+
+1. `TdDataSource` publishes TDLib's real contiguous prefix (`local.downloadOffset +
+   downloadedPrefixSize`, whole file when complete) into `StreamingRuntime.loadedPrefix` on
+   every read, every wait-loop iteration and every pump tick.
+2. `PlaybackService` ticks ~1 Hz, classifies the pause (user vs. internal hold), and calls
+   `TdDataSourceFactory.current?.prebufferTick(userPaused)`.
+3. While the user has paused, the pump advances the window **from the bytes already downloaded**
+   (`start = aligned max(readPos, prefixEnd)` — never backwards, never restarting the transfer)
+   in limit-bounded `DownloadFile` chunks until the mode's `Prebuffer.targetBytes` is reached,
+   then stops. If the buffer falls below the target (e.g. after a seek), it resumes fetching.
+4. Requests are de-duplicated through the same `RangeTracker` the read path uses
+   (`adoptOrPlan`), run at TDLib priority 20 — below active playback (32), interleaved with the
+   download scheduler's 8–30 range — so queued user downloads keep their fair share of TDLib's
+   byte budget while the player is paused. No competing full-file download is ever started:
+   every request carries an explicit limit.
+5. Targets are bounded and adapt: byte cap per mode (Low 6 MB < Normal 24 MB < Extreme 96 MB),
+   converted to a time cap when the average media bitrate is known (player computes it from real
+   size/duration), further cut to what the measured EWMA throughput can actually deliver, and
+   clamped to the file size. Extreme prebuffers the most; Low Data the least; Normal stays
+   responsive and honours the user's read-ahead cap.
+6. The pump never touches playback state: a user-paused video is never auto-resumed.
+
+**Extreme Low Data start gate.** `LoadControl` buffer durations are fixed when the service is
+created, so live mode switches cannot change them. Instead, pure `StartGate` predicates
+evaluated by the service ticker HOLD playback (internal pause, flagged as such) while the
+buffer ahead of the playhead is below the mode's start target (6–10 s in Extreme), and release
+it at the resume target (10–15 s+), at end-of-stream, when the user leaves Extreme mode, or
+when the user explicitly presses play — the user always wins, and after an override the gate
+stands down until the buffer has recovered to the resume target. Internal holds are tracked
+separately from user pauses; a user pause always cancels the hold and hands over to the
+pause-prebuffer pump.
+
+**YouTube-style timeline (video).** The custom seek bar renders exactly three tracks from real
+data: played (player position), **loaded** = `max(Media3 bufferedPosition, TDLib contiguous
+prefix end mapped linearly to time via file size)`, and unloaded (the rest). Because the loaded
+track reads `StreamingRuntime.loadedPrefix` at 4 Hz, it visibly grows while the video is paused
+and the pump runs. It never fabricates ranges: TDLib exposes one contiguous prefix per file and
+that is precisely what is drawn. The bar is tap- and drag-seekable (scrub locally, seek on
+release), sits on the always-black player background, so its played/loaded/unloaded colours are
+legible in both light and dark themes. Audio keeps the built-in controller, whose TimeBar shows
+Media3's buffered position while the same pump prebuffers in the background.
+
 ## 3. Limitations (honest list)
 
 - TDLib's single-prefix window: seeking re-fetches at the new offset; previously fetched bytes
@@ -85,7 +148,17 @@ not randomly addressable.
   downloads the file (with progress) into the app cache — never into Downloads.
 - LoadControl buffer durations are chosen when the playback service is created; the data-source
   window/backoff/stall behaviour follows live mode switches immediately, buffer durations take
-  the new mode on the next service start.
+  the new mode on the next service start. The Extreme start gate (service ticker) approximates
+  the start/resume thresholds live for the held-start behaviour.
+- The loaded track maps the downloaded BYTE prefix to time linearly (average bitrate). For
+  variable-bitrate files the shaded region can be slightly ahead of/behind the true playable
+  duration, but it never overstates available bytes.
+- Pause-prebuffering extends the single TDLib window forward from the prefix end. On resume,
+  ExoPlayer reads at the playhead; if the window has moved beyond it, the read path re-plans a
+  window at the playhead and TDLib re-fetches the (bounded, ≤ one window) overlap — already
+  fetched bytes ahead stay on disk but are not randomly addressable (single-prefix limitation).
+- None of the three modes can promise zero buffering when network throughput is below the media
+  bitrate; Extreme only maximises the runway before and between stalls.
 - Codec support is the device's (Media3/ExoPlayer); some MKV/HEVC/AC3 files may not play.
   No transcoding, no VLC (per requirements).
 - Background playback keeps audio after leaving the player; stop it from the notification.
@@ -129,6 +202,14 @@ Automated (run in CI on every push, `:app:testReleaseUnitTest`, all passing):
 seek re-planning, bounded monotonic backoff, Low Data < Normal prefetch, Normal keeping the
 largest window on fast links without faking variants, hysteresis (no band flapping), bounded
 rebuffer protection with unknown metadata, and the user's window cap.
+`ExtremeModeTest` covers the three-mode system: mode enum round-trip (persistence by name),
+pause-prebuffer ordering (Low < Normal < Extreme) and boundedness, per-mode user-cap handling,
+bitrate/throughput/file-size adaptation of targets, Extreme's continuity-over-startup policy
+(deepest start/resume buffers, widest windows, background prefetch always on, even in the LOW
+band), Extreme's most-patient-but-bounded backoff, `StartGate` hold/release semantics (holds
+only in Extreme, releases on target/EOF/mode change), pump de-duplication (`adoptOrPlan`),
+positive pause targets in every decision, and `LoadedPrefix` fraction clamping for the
+seek-bar rendering.
 
 Acceptance criteria that need a device + real Telegram account (cannot be reproduced in CI):
 items 1, 2, 7, 10 (real network streaming/seek/recovery/audio), 12 (auth/search against a live
